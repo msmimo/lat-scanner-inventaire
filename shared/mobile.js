@@ -1,0 +1,1449 @@
+// Mobile App State
+let currentTab = 'scan';
+let cameraStream = null;
+let scanAnimation = false;
+let allPieces = [];
+let allPositions = [];
+let allTables = [];
+let positionsById = {};
+let currentPosition = null;
+let pendingPiece = null;
+
+// Page Titles
+const pageTitles = {
+  scan: 'Scanner',
+  dashboard: 'Dashboard',
+  pieces: 'Pièces',
+  huot: 'Entrepôt Huot'
+};
+
+// Initialize
+async function init() {
+  // Setup modal maintenance type first (no API call needed)
+  document.getElementById('modal-maintenance-type').innerHTML = TYPES_ENTRETIEN.map(t => `<option value="${t}">${t}</option>`).join('');
+
+  // Event listeners
+  document.getElementById('mobile-select-position').addEventListener('change', afficherEtatPositionMobile);
+  document.getElementById('pieces-filter').addEventListener('input', chargerPiecesParStatut);
+
+  try {
+    // Load data
+    allTables = await sbSelect('tables_travail', '*&order=nom');
+    allPositions = await sbSelect('positions', '*');
+    allPositions.forEach(p => positionsById[p.id] = p);
+
+    // Find DC74 table
+    const dc74Table = allTables.find(t => t.nom === 'DC74');
+    if (dc74Table) {
+      // Set DC74 as default and hide table selector
+      document.getElementById('mobile-select-table').value = dc74Table.id;
+      document.getElementById('table-selector-group').style.display = 'none';
+    } else {
+      // If DC74 not found, show table selector as fallback
+      const tableOptions = allTables.map(t => `<option value="${t.id}">${t.nom}</option>`).join('');
+      document.getElementById('mobile-select-table').innerHTML = tableOptions;
+    }
+
+    // Populate dashboard table select (keep it for dashboard view)
+    const tableOptions = allTables.map(t => `<option value="${t.id}">${t.nom}</option>`).join('');
+    document.getElementById('dashboard-table-select').innerHTML = tableOptions;
+
+    // Set DC74 as default in dashboard too
+    if (dc74Table) {
+      document.getElementById('dashboard-table-select').value = dc74Table.id;
+    }
+
+    // Load initial data
+    await chargerPositionsMobile();
+    await updatePositionSlots(); // Update visual position status
+    await chargerHistoriqueRecent();
+    await chargerPiecesParStatut();
+    await chargerStatsDashboard();
+    await chargerDashboardTable(); // Load DC74 dashboard data
+    await chargerPiecesHuot();
+    await chargerExpeditionsRecentes();
+
+  } catch (e) {
+    console.error('Erreur d\'initialisation:', e);
+
+    // Show error in UI
+    document.getElementById('recent-history').innerHTML =
+      '<div class="message error">⚠️ Configuration Supabase requise<br><small>Modifiez shared/api.js</small></div>';
+
+    if (e.message.includes('VOTRE-PROJET') || e.message.includes('Failed to fetch')) {
+      console.error('💡 Configuration Supabase manquante. Éditez shared/api.js avec vos identifiants.');
+    }
+  }
+}
+
+// Toast Notification Helper
+function showToast(message, type = 'success') {
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.className = `toast ${type}`;
+
+  // Show toast
+  setTimeout(() => toast.classList.add('show'), 10);
+
+  // Hide after 3 seconds
+  setTimeout(() => {
+    toast.classList.remove('show');
+  }, 3000);
+}
+
+// Tab Switching
+function switchTab(tabName) {
+  currentTab = tabName;
+
+  // Update views
+  document.querySelectorAll('.tab-view').forEach(view => {
+    view.classList.remove('active');
+  });
+  document.getElementById(`tab-${tabName}`).classList.add('active');
+
+  // Update navigation with ARIA
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.classList.remove('active');
+    item.removeAttribute('aria-current');
+  });
+  const activeNavItem = document.querySelector(`.nav-item[data-tab="${tabName}"]`);
+  activeNavItem.classList.add('active');
+  activeNavItem.setAttribute('aria-current', 'page');
+
+  // Update title
+  document.getElementById('page-title').textContent = pageTitles[tabName];
+
+  // Reload data for tab
+  if (tabName === 'dashboard') {
+    // Ensure DC74 is selected in dashboard
+    const dc74Table = allTables.find(t => t.nom === 'DC74');
+    if (dc74Table) {
+      document.getElementById('dashboard-table-select').value = dc74Table.id;
+    }
+    chargerStatsDashboard();
+    chargerDashboardTable();
+  } else if (tabName === 'pieces') {
+    chargerPiecesParStatut();
+  } else if (tabName === 'huot') {
+    chargerPiecesHuot();
+    chargerExpeditionsRecentes();
+  }
+}
+
+// Position Selection from Interactive Layout
+function selectPosition(positionCode) {
+  // Find the position by code (M1, M2, S1, etc.)
+  const position = allPositions.find(p => p.code_position === positionCode);
+
+  if (!position) {
+    // Silently fail, don't show error
+    console.log(`Position ${positionCode} non trouvée`);
+    return;
+  }
+
+  // Update hidden select
+  document.getElementById('mobile-select-position').value = position.id;
+
+  // Update visual state
+  document.querySelectorAll('.position-slot').forEach(slot => {
+    slot.classList.remove('selected');
+  });
+  const selectedSlot = document.querySelector(`[data-position="${positionCode}"]`);
+  if (selectedSlot) {
+    selectedSlot.classList.add('selected');
+  }
+
+  // Update current position and display state
+  currentPosition = position;
+  afficherEtatPositionMobile();
+
+  // Haptic feedback
+  if (navigator.vibrate) {
+    navigator.vibrate(10);
+  }
+
+  // Auto-show scanning section
+  showScanningInput();
+}
+
+// Update position slots with occupancy status
+async function updatePositionSlots() {
+  if (!allPositions.length) return;
+
+  // Get DC74 table
+  const dc74Table = allTables.find(t => t.nom === 'DC74');
+  if (!dc74Table) return;
+
+  // Get all pieces for DC74 positions
+  const dc74Positions = allPositions.filter(p => p.table_id === dc74Table.id);
+  const positionIds = dc74Positions.map(p => p.id);
+
+  if (positionIds.length === 0) return;
+
+  try {
+    const pieces = await sbSelect('pieces', `*&position_id=in.(${positionIds.join(',')})`);
+    const occupiedPositionIds = new Set(pieces.map(p => p.position_id));
+
+    // Update each slot
+    dc74Positions.forEach(pos => {
+      const slot = document.querySelector(`[data-position="${pos.code_position}"]`);
+      if (slot) {
+        slot.classList.remove('occupied', 'empty');
+        if (occupiedPositionIds.has(pos.id)) {
+          slot.classList.add('occupied');
+        } else {
+          slot.classList.add('empty');
+        }
+      }
+    });
+  } catch (e) {
+    console.error('Erreur lors de la mise à jour des slots:', e);
+  }
+}
+
+// Scanner Functions
+async function chargerPositionsMobile() {
+  // Get table ID - either from select or find DC74 by default
+  let tableId = document.getElementById('mobile-select-table').value;
+
+  if (!tableId && allTables.length > 0) {
+    // If no table selected, find DC74
+    const dc74Table = allTables.find(t => t.nom === 'DC74');
+    if (dc74Table) {
+      tableId = dc74Table.id;
+      document.getElementById('mobile-select-table').value = tableId;
+    }
+  }
+
+  const positions = tableId ? allPositions.filter(p => p.table_id === tableId) : [];
+
+  if (positions.length === 0) {
+    document.getElementById('mobile-select-position').innerHTML = '<option value="">Aucune position disponible</option>';
+    return;
+  }
+
+  document.getElementById('mobile-select-position').innerHTML = positions.map(p =>
+    `<option value="${p.id}">${p.code_position}</option>`
+  ).join('');
+  await afficherEtatPositionMobile();
+}
+
+async function afficherEtatPositionMobile() {
+  const positionId = document.getElementById('mobile-select-position').value;
+  currentPosition = allPositions.find(p => p.id === positionId) || null;
+  const statusEl = document.getElementById('mobile-etat-position');
+  const statusCard = statusEl.closest('.position-status-card');
+
+  if (!currentPosition) {
+    statusEl.innerHTML = '<em style="color:#9ca3af;">Cliquez sur une position ci-dessus</em>';
+    if (statusCard) statusCard.classList.add('empty-state');
+    return;
+  }
+
+  try {
+    const pieces = await sbSelect('pieces', `*&position_id=eq.${currentPosition.id}`);
+
+    if (pieces.length > 0) {
+      const piece = pieces[0];
+      statusEl.innerHTML = `
+        <strong>${currentPosition.code_position}</strong> -
+        Pièce <strong>${piece.no_piece}</strong>
+        <br><small style="color:#666;">Statut: ${piece.statut}</small>
+      `;
+      if (statusCard) statusCard.classList.remove('empty-state');
+    } else {
+      statusEl.innerHTML = `
+        <strong>${currentPosition.code_position}</strong> -
+        <span style="color:#10b981;">Position vide ✓</span>
+      `;
+      if (statusCard) statusCard.classList.remove('empty-state');
+    }
+  } catch (e) {
+    console.error('Erreur affichage état:', e);
+    statusEl.textContent = `${currentPosition.code_position} - Erreur de chargement`;
+  }
+}
+
+async function demarrerScan() {
+  document.getElementById('search-section').style.display = 'none';
+  document.getElementById('scanner-section').style.display = 'block';
+  await updatePositionSlots(); // Refresh status when opening scanner
+}
+
+// Show scanning input section after position selection
+function showScanningInput() {
+  const scanningSection = document.getElementById('scanning-input-section');
+  scanningSection.style.display = 'block';
+
+  // Hide instruction card
+  const instructionCard = document.querySelector('.instruction-card');
+  if (instructionCard) {
+    instructionCard.classList.add('hidden');
+  }
+
+  // Smooth scroll to input section
+  setTimeout(() => {
+    scanningSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, 100);
+
+  // Focus on manual input
+  const manualInput = document.getElementById('mobile-manual-input');
+  setTimeout(() => {
+    manualInput.focus();
+  }, 300);
+
+  // Clear any previous messages
+  document.getElementById('mobile-message-scan').innerHTML = '';
+}
+
+function showSearch() {
+  document.getElementById('scanner-section').style.display = 'none';
+  document.getElementById('search-section').style.display = 'block';
+  document.getElementById('search-input').focus();
+}
+
+function hideSearch() {
+  document.getElementById('search-section').style.display = 'none';
+  document.getElementById('search-results').innerHTML = '';
+  document.getElementById('search-input').value = '';
+}
+
+async function rechercherPiece() {
+  const noPiece = document.getElementById('search-input').value.trim();
+  const resultsEl = document.getElementById('search-results');
+
+  if (!noPiece) {
+    resultsEl.innerHTML = '<p class="text-error">Veuillez saisir un No. pièce</p>';
+    return;
+  }
+
+  resultsEl.innerHTML = '<p class="loading">Recherche...</p>';
+
+  try {
+    const pieces = await sbSelect('pieces', `*&no_piece=ilike.%${encodeURIComponent(noPiece)}%`);
+
+    if (!pieces.length) {
+      resultsEl.innerHTML = '<p class="text-error">Aucune pièce trouvée</p>';
+      return;
+    }
+
+    resultsEl.innerHTML = pieces.map(p => {
+      const position = p.position_id ? positionsById[p.position_id] : null;
+      return `
+        <div class="piece-item">
+          <div>
+            <div class="piece-no">${p.no_piece}</div>
+            <div class="piece-info">${p.statut}</div>
+            <div class="piece-info">${position ? position.code_position : 'Aucune position'}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+  } catch (e) {
+    resultsEl.innerHTML = '<p class="text-error">Erreur de recherche</p>';
+  }
+}
+
+function demarrerScan() {
+  document.getElementById('search-section').style.display = 'none';
+  document.getElementById('scanner-section').style.display = 'block';
+  demarrerCamera();
+}
+
+function arreterScan() {
+  arreterCamera();
+  document.getElementById('scanner-section').style.display = 'none';
+  document.getElementById('scanning-input-section').style.display = 'none';
+  document.getElementById('mobile-message-scan').innerHTML = '';
+  document.getElementById('mobile-manual-input').value = '';
+
+  // Show instruction card again
+  const instructionCard = document.querySelector('.instruction-card');
+  if (instructionCard) {
+    instructionCard.classList.remove('hidden');
+  }
+
+  // Clear position selection
+  document.querySelectorAll('.position-slot').forEach(slot => {
+    slot.classList.remove('selected');
+  });
+  currentPosition = null;
+
+  // Reset status card
+  const statusEl = document.getElementById('mobile-etat-position');
+  const statusCard = statusEl.closest('.position-status-card');
+  statusEl.innerHTML = '<em style="color:#9ca3af;">Cliquez sur une position ci-dessus</em>';
+  if (statusCard) statusCard.classList.add('empty-state');
+}
+
+async function demarrerCamera() {
+  const video = document.getElementById('mobile-video');
+  const messageEl = document.getElementById('mobile-message-scan');
+
+  // Check if running on HTTPS or localhost
+  const isSecureContext = window.isSecureContext;
+
+  if (!isSecureContext && window.location.hostname !== 'localhost') {
+    messageEl.innerHTML = `
+      <div class="message error">
+        <strong>⚠️ Caméra non disponible</strong><br>
+        La caméra nécessite HTTPS sur mobile.<br><br>
+        <strong>Solutions:</strong><br>
+        1. Utilisez la saisie manuelle ci-dessus<br>
+        2. Ou visitez: <code style="font-size:11px">https://${window.location.hostname}:3443/mobile.html</code>
+      </div>
+    `;
+    return;
+  }
+
+  video.classList.add('active');
+
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment' }
+    });
+    video.srcObject = cameraStream;
+    await video.play();
+    scanAnimation = true;
+    boucleScanMobile();
+    messageEl.innerHTML = '<div class="message success">📷 Caméra activée - Scannez le code QR</div>';
+  } catch (e) {
+    let errorMsg = 'Caméra indisponible';
+
+    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+      errorMsg = `
+        <strong>🚫 Permission refusée</strong><br>
+        Autorisez l'accès à la caméra dans les paramètres du navigateur.<br><br>
+        <strong>Ou utilisez la saisie manuelle ci-dessus</strong>
+      `;
+    } else if (e.name === 'NotFoundError') {
+      errorMsg = `
+        <strong>📷 Caméra introuvable</strong><br>
+        Votre appareil n'a pas de caméra.<br><br>
+        <strong>Utilisez la saisie manuelle ci-dessus</strong>
+      `;
+    } else if (e.name === 'NotSupportedError') {
+      errorMsg = `
+        <strong>⚠️ HTTPS requis</strong><br>
+        La caméra nécessite une connexion sécurisée.<br><br>
+        Visitez: <code style="font-size:11px">https://${window.location.hostname}:3443/mobile.html</code><br>
+        Ou utilisez la saisie manuelle
+      `;
+    }
+
+    messageEl.innerHTML = `<div class="message error">${errorMsg}</div>`;
+    video.classList.remove('active');
+  }
+}
+
+function arreterCamera() {
+  scanAnimation = false;
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = null;
+  }
+  document.getElementById('mobile-video').classList.remove('active');
+}
+
+function boucleScanMobile() {
+  if (!scanAnimation) return;
+
+  const video = document.getElementById('mobile-video');
+  const canvas = document.getElementById('mobile-canvas');
+
+  if (video.readyState === video.HAVE_ENOUGH_DATA) {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+    if (code && code.data) {
+      arreterCamera();
+      traiterCode(code.data.trim());
+      return;
+    }
+  }
+
+  requestAnimationFrame(boucleScanMobile);
+}
+
+function traiterSaisieManuelle() {
+  const noPiece = document.getElementById('mobile-manual-input').value.trim();
+  if (!noPiece) return;
+  traiterCode(noPiece);
+  document.getElementById('mobile-manual-input').value = '';
+}
+
+async function traiterCode(noPiece) {
+  const messageEl = document.getElementById('mobile-message-scan');
+  messageEl.innerHTML = '';
+
+  if (!currentPosition) {
+    messageEl.innerHTML = '<div class="message error">Choisissez une table et une position</div>';
+    return;
+  }
+
+  const results = await sbSelect('pieces', `*&no_piece=eq.${encodeURIComponent(noPiece)}`);
+  let piece = results[0];
+
+  if (!piece) {
+    if (!confirm(`Pièce inconnue : ${noPiece}. La créer avec le statut "Inventaire - Prêt" ?`)) {
+      return;
+    }
+    piece = await sbInsert('pieces', { no_piece: noPiece, statut: 'Inventaire - Prêt' });
+    await enregistrerAudit({
+      typeEntite: 'pieces',
+      entiteId: piece.id,
+      action: 'creation',
+      apres: piece
+    });
+  }
+
+  pendingPiece = piece;
+
+  if (piece.statut === 'Inventaire - Prêt') {
+    await installerPiece(piece, { force: false });
+  } else {
+    document.getElementById('modal-error-text').textContent =
+      `La pièce ${piece.no_piece} est au statut "${piece.statut}". Seules les pièces "Inventaire - Prêt" peuvent être installées.`;
+    document.getElementById('modal-error').style.display = 'flex';
+  }
+}
+
+function closeErrorModal() {
+  document.getElementById('modal-error').style.display = 'none';
+  pendingPiece = null;
+}
+
+function openMaintenanceModal() {
+  document.getElementById('modal-error').style.display = 'none';
+  document.getElementById('modal-maintenance').style.display = 'flex';
+}
+
+function closeMaintenanceModal() {
+  document.getElementById('modal-maintenance').style.display = 'none';
+  document.getElementById('modal-maintenance-reason').value = '';
+  pendingPiece = null;
+}
+
+async function confirmerInstallationForcee() {
+  const typeEntretien = document.getElementById('modal-maintenance-type').value;
+  const raison = document.getElementById('modal-maintenance-reason').value.trim();
+  document.getElementById('modal-maintenance').style.display = 'none';
+  await installerPiece(pendingPiece, { force: true, typeEntretien, raison });
+  document.getElementById('modal-maintenance-reason').value = '';
+}
+
+async function installerPiece(piece, { force, typeEntretien, raison }) {
+  const messageEl = document.getElementById('mobile-message-scan');
+  const ancienStatut = piece.statut;
+
+  // Remove old piece if exists
+  const occupants = await sbSelect('pieces', `*&position_id=eq.${currentPosition.id}`);
+  const ancienneInstallee = occupants.find(p => p.id !== piece.id);
+
+  if (ancienneInstallee) {
+    await sbUpdate('pieces', ancienneInstallee.id, {
+      statut: 'Inventaire - À entretenir',
+      position_id: null
+    });
+    await enregistrerHistorique({
+      piece: ancienneInstallee,
+      ancienStatut: 'Mise en production',
+      nouveauStatut: 'Inventaire - À entretenir',
+      typeAction: 'remplacement',
+      position: currentPosition,
+      notes: `Remplacée par ${piece.no_piece}`
+    });
+  }
+
+  // Install new piece
+  await sbUpdate('pieces', piece.id, {
+    statut: 'Mise en production',
+    position_id: currentPosition.id
+  });
+  await enregistrerHistorique({
+    piece,
+    ancienStatut,
+    nouveauStatut: 'Mise en production',
+    typeAction: force ? 'installation_forcee' : (ancienneInstallee ? 'remplacement' : 'installation'),
+    position: currentPosition,
+    notes: force ? `Forcé — ${typeEntretien} — ${raison}` : null
+  });
+
+  if (force) {
+    await sbInsert('entretiens', {
+      piece_id: piece.id,
+      position_id: currentPosition.id,
+      type_entretien: typeEntretien,
+      precision_autre: typeEntretien.startsWith('Autre') ? raison : null,
+      raison,
+      effectue_par: nomOperateur()
+    });
+  }
+
+  await enregistrerAudit({
+    typeEntite: 'pieces',
+    entiteId: piece.id,
+    action: force ? 'installation_forcee' : 'installation',
+    avant: { statut: ancienStatut },
+    apres: { statut: 'Mise en production', position_id: currentPosition.id }
+  });
+
+  // Use toast for success feedback
+  showToast(`✓ Pièce ${piece.no_piece} installée sur ${currentPosition.code_position}`, 'success');
+  messageEl.innerHTML = '';  // Clear inline message
+  pendingPiece = null;
+  await afficherEtatPositionMobile();
+  await updatePositionSlots(); // Update visual status
+  await chargerHistoriqueRecent();
+
+  // Clear input and hide scanning section after success
+  document.getElementById('mobile-manual-input').value = '';
+
+  // Close scanner section after successful install and reset
+  setTimeout(() => {
+    document.getElementById('scanning-input-section').style.display = 'none';
+
+    // Show instruction card again
+    const instructionCard = document.querySelector('.instruction-card');
+    if (instructionCard) {
+      instructionCard.classList.remove('hidden');
+    }
+
+    // Clear selection
+    document.querySelectorAll('.position-slot').forEach(slot => {
+      slot.classList.remove('selected');
+    });
+
+    // Reset status card
+    const statusEl = document.getElementById('mobile-etat-position');
+    const statusCard = statusEl.closest('.position-status-card');
+    statusEl.innerHTML = '<em style="color:#9ca3af;">Cliquez sur une position ci-dessus</em>';
+    if (statusCard) statusCard.classList.add('empty-state');
+  }, 1500);
+}
+
+// History
+async function chargerHistoriqueRecent() {
+  const historyEl = document.getElementById('recent-history');
+  try {
+    const history = await sbSelect('historique', '*&order=debut_statut.desc&limit=10');
+
+    if (!history.length) {
+      historyEl.innerHTML = '<p class="loading">Aucun historique</p>';
+      return;
+    }
+
+    historyEl.innerHTML = history.map(h => `
+      <div class="history-item">
+        <div class="history-header">
+          <span class="piece-no">${h.no_piece}</span>
+          <span class="timestamp">${new Date(h.debut_statut).toLocaleString('fr-CA', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+          })}</span>
+        </div>
+        <div class="action">${h.type_action} → ${h.nouveau_statut}</div>
+        ${h.code_position ? `<div class="piece-info">${h.code_position}</div>` : ''}
+      </div>
+    `).join('');
+
+  } catch (e) {
+    historyEl.innerHTML = '<p class="text-error">Erreur de chargement</p>';
+  }
+}
+
+// Dashboard
+async function chargerStatsDashboard() {
+  try {
+    const pieces = await sbSelect('pieces', 'statut');
+    const counts = {};
+    STATUTS.forEach(s => counts[s] = 0);
+    pieces.forEach(p => counts[p.statut] = (counts[p.statut] || 0) + 1);
+
+    document.getElementById('stat-production').textContent = counts['Mise en production'] || 0;
+    document.getElementById('stat-pret').textContent = counts['Inventaire - Prêt'] || 0;
+    document.getElementById('stat-entretien').textContent = counts['Inventaire - À entretenir'] || 0;
+    document.getElementById('stat-huot').textContent = counts['Chez Huot'] || 0;
+    document.getElementById('stat-rebutee').textContent = counts['Remisée - Rebutée'] || 0;
+
+  } catch (e) {
+    console.error('Erreur stats:', e);
+  }
+}
+
+async function chargerDashboardTable() {
+  const tableId = document.getElementById('dashboard-table-select').value;
+  const gridEl = document.getElementById('dashboard-positions');
+
+  if (!tableId) {
+    gridEl.innerHTML = '<p class="loading">Sélectionnez une table</p>';
+    return;
+  }
+
+  const positions = allPositions.filter(p => p.table_id === tableId);
+
+  if (!positions.length) {
+    gridEl.innerHTML = '<p class="loading">Aucune position pour cette table</p>';
+    return;
+  }
+
+  try {
+    const posIds = positions.map(p => p.id).join(',');
+    const pieces = posIds ? await sbSelect('pieces', `*&position_id=in.(${posIds})`) : [];
+    const piecesByPosition = {};
+    pieces.forEach(p => piecesByPosition[p.position_id] = p);
+
+    gridEl.innerHTML = positions.map(pos => {
+      const piece = piecesByPosition[pos.id];
+      return `
+        <div class="position-cell ${piece ? 'occupied' : ''}">
+          <div class="code">${pos.code_position}</div>
+          <div class="piece">${piece ? piece.no_piece : '—'}</div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    gridEl.innerHTML = '<p class="text-error">Erreur de chargement</p>';
+  }
+}
+
+// Pieces by Status
+async function chargerPiecesParStatut() {
+  const filter = document.getElementById('pieces-filter').value.trim().toLowerCase();
+
+  try {
+    allPieces = await sbSelect('pieces', '*&order=no_piece');
+    const filtered = allPieces.filter(p =>
+      !filter || p.no_piece.toLowerCase().includes(filter)
+    );
+
+    const byStatus = {
+      'Inventaire - Prêt': [],
+      'Mise en production': [],
+      'Inventaire - À entretenir': [],
+      'Remisée - Rebutée': []
+    };
+
+    filtered.forEach(p => {
+      if (byStatus[p.statut]) {
+        byStatus[p.statut].push(p);
+      }
+    });
+
+    // Update counts and lists
+    afficherSection('pret', byStatus['Inventaire - Prêt']);
+    afficherSection('production', byStatus['Mise en production']);
+    afficherSection('entretien', byStatus['Inventaire - À entretenir']);
+    afficherSection('rebutee', byStatus['Remisée - Rebutée']);
+
+  } catch (e) {
+    console.error('Erreur chargement pièces:', e);
+  }
+}
+
+function afficherSection(sectionKey, pieces) {
+  document.getElementById(`count-${sectionKey}`).textContent = pieces.length;
+  const listEl = document.getElementById(`list-${sectionKey}`);
+
+  if (!pieces.length) {
+    listEl.innerHTML = '<p class="loading">Aucune pièce</p>';
+    return;
+  }
+
+  listEl.innerHTML = pieces.map(p => {
+    const position = p.position_id ? positionsById[p.position_id] : null;
+    return `
+      <div class="piece-item">
+        <div>
+          <div class="piece-no">${p.no_piece}</div>
+          ${position ? `<div class="piece-info">${position.code_position}</div>` : ''}
+          <div class="piece-info">${new Date(p.updated_at).toLocaleString('fr-CA', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+          })}</div>
+        </div>
+        <div class="piece-action" onclick="changerStatutPiece('${p.id}')">⚙️</div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function changerStatutPiece(pieceId) {
+  const piece = allPieces.find(p => p.id === pieceId);
+  if (!piece) return;
+
+  const choix = STATUTS.map((s, i) => `${i + 1}. ${s}`).join('\n');
+  const reponse = prompt(`Nouveau statut pour ${piece.no_piece} :\n${choix}`, '');
+  const index = parseInt(reponse, 10) - 1;
+
+  if (isNaN(index) || !STATUTS[index]) return;
+  const nouveauStatut = STATUTS[index];
+  if (nouveauStatut === piece.statut) return;
+
+  const raison = prompt('Raison du changement (optionnel) :') || null;
+  const ancienStatut = piece.statut;
+
+  await sbUpdate('pieces', piece.id, {
+    statut: nouveauStatut,
+    position_id: nouveauStatut === 'Mise en production' ? piece.position_id : null
+  });
+
+  await enregistrerHistorique({
+    piece,
+    ancienStatut,
+    nouveauStatut,
+    typeAction: 'modification_statut',
+    position: piece.position_id ? positionsById[piece.position_id] : null,
+    notes: raison
+  });
+
+  await enregistrerAudit({
+    typeEntite: 'pieces',
+    entiteId: piece.id,
+    action: 'modification_statut',
+    avant: { statut: ancienStatut },
+    apres: { statut: nouveauStatut },
+    raison
+  });
+
+  await chargerPiecesParStatut();
+}
+
+// Huot
+async function chargerPiecesHuot() {
+  const listEl = document.getElementById('huot-pieces-list');
+  try {
+    const pieces = await sbSelect('pieces', '*&statut=eq.Chez Huot&order=updated_at.desc');
+
+    if (!pieces.length) {
+      listEl.innerHTML = '<p class="loading">Aucune pièce chez Huot</p>';
+      return;
+    }
+
+    listEl.innerHTML = pieces.map(p => `
+      <div class="piece-item">
+        <div>
+          <div class="piece-no">${p.no_piece}</div>
+          <div class="piece-info">${new Date(p.updated_at).toLocaleString('fr-CA', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+          })}</div>
+        </div>
+      </div>
+    `).join('');
+
+  } catch (e) {
+    listEl.innerHTML = '<p class="text-error">Erreur de chargement</p>';
+  }
+}
+
+async function expedierVersHuot() {
+  const noPiece = document.getElementById('huot-piece-input').value.trim();
+  const messageEl = document.getElementById('huot-message');
+  messageEl.innerHTML = '';
+
+  if (!noPiece) {
+    messageEl.innerHTML = '<div class="message error">Veuillez saisir un No. pièce</div>';
+    return;
+  }
+
+  try {
+    const results = await sbSelect('pieces', `*&no_piece=eq.${encodeURIComponent(noPiece)}`);
+    const piece = results[0];
+
+    if (!piece) {
+      messageEl.innerHTML = `<div class="message error">Pièce inconnue : ${noPiece}</div>`;
+      return;
+    }
+
+    const ancienStatut = piece.statut;
+    await sbUpdate('pieces', piece.id, { statut: 'Chez Huot', position_id: null });
+    await sbInsert('expeditions_huot', {
+      piece_id: piece.id,
+      no_piece: piece.no_piece,
+      expedie_par: nomOperateur()
+    });
+
+    await enregistrerHistorique({
+      piece,
+      ancienStatut,
+      nouveauStatut: 'Chez Huot',
+      typeAction: 'expedition_huot',
+      position: null,
+      notes: 'Expédiée vers Huot depuis mobile'
+    });
+
+    await enregistrerAudit({
+      typeEntite: 'pieces',
+      entiteId: piece.id,
+      action: 'expedition_huot',
+      avant: { statut: ancienStatut },
+      apres: { statut: 'Chez Huot' }
+    });
+
+    showToast(`✓ ${piece.no_piece} marquée "Chez Huot"`, 'success');
+    messageEl.innerHTML = '';
+    document.getElementById('huot-piece-input').value = '';
+    await chargerPiecesHuot();
+    await chargerExpeditionsRecentes();
+
+    // Déclencher notification email
+    await triggerEmailNotification(`Pièce ${piece.no_piece} expédiée vers Huot`);
+
+  } catch (e) {
+    showToast('Erreur d\'expédition', 'error');
+    messageEl.innerHTML = '';
+  }
+}
+
+async function chargerExpeditionsRecentes() {
+  const listEl = document.getElementById('huot-expeditions');
+  try {
+    const expeditions = await sbSelect('expeditions_huot', '*&supprime=eq.false&order=expedie_le.desc&limit=20');
+
+    if (!expeditions.length) {
+      listEl.innerHTML = '<p class="loading">Aucune expédition récente</p>';
+      return;
+    }
+
+    listEl.innerHTML = expeditions.map(e => `
+      <div class="history-item">
+        <div class="history-header">
+          <span class="piece-no">${e.no_piece}</span>
+          <span class="timestamp">${new Date(e.expedie_le).toLocaleString('fr-CA', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+          })}</span>
+        </div>
+        <div class="action">Expédié par ${e.expedie_par || '—'}</div>
+      </div>
+    `).join('');
+
+  } catch (e) {
+    listEl.innerHTML = '<p class="text-error">Erreur de chargement</p>';
+  }
+}
+
+// ===== APEX SCANNER FUNCTIONS =====
+
+let apexActivePosition = null;
+let apexScanning = false;
+let apexRafId = null;
+let apexCurrentStream = null;
+const apexCanvas = document.createElement('canvas');
+const apexCtx = apexCanvas.getContext('2d', { willReadFrequently: true });
+const apexDataStore = {};
+
+// Select position in APEX interface
+function selectPositionAPEX(pos) {
+  // Remove active from all
+  document.querySelectorAll('.apex-position-box').forEach(box => {
+    box.classList.remove('active');
+  });
+
+  // Set active
+  apexActivePosition = pos;
+  const box = document.querySelector(`[data-pos="${pos}"]`);
+  if (box) {
+    box.classList.add('active');
+  }
+
+  // Update UI
+  document.getElementById('apex-active-tag').textContent = pos;
+  document.getElementById('apex-active-tag').style.display = '';
+  document.getElementById('apex-hint-text').style.display = 'none';
+  document.getElementById('apex-scan-section').style.display = '';
+
+  // Show current value if exists
+  const cur = apexDataStore[pos];
+  const statusEl = document.getElementById('apex-scan-status');
+  if (cur) {
+    statusEl.textContent = '▪ Valeur actuelle : ' + cur;
+    statusEl.className = 'apex-status ok';
+    statusEl.style.display = '';
+  } else {
+    statusEl.style.display = 'none';
+  }
+
+  // Reset camera and manual
+  stopAPEXScan();
+  document.getElementById('apex-manual-row').style.display = 'none';
+  document.getElementById('apex-manual-input').value = '';
+
+  // Haptic feedback
+  if (navigator.vibrate) {
+    navigator.vibrate(10);
+  }
+}
+
+// Start APEX camera scanning
+async function startAPEXScan() {
+  if (!apexActivePosition || apexScanning) return;
+
+  const camArea = document.getElementById('apex-cam-area');
+  const video = document.getElementById('apex-video');
+  const statusEl = document.getElementById('apex-scan-status');
+  const btn = document.getElementById('apex-scan-btn');
+
+  camArea.style.display = '';
+  statusEl.textContent = 'Démarrage caméra…';
+  statusEl.className = 'apex-status';
+  statusEl.style.display = '';
+
+  try {
+    apexCurrentStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    video.srcObject = apexCurrentStream;
+    await video.play();
+    apexScanning = true;
+    btn.textContent = '■ Arrêter';
+    btn.onclick = stopAPEXScan;
+    statusEl.textContent = 'Pointez le QR code vers la caméra…';
+    apexTick(video);
+  } catch(e) {
+    statusEl.textContent = '⚠️ HTTPS requis pour caméra. Utilisez la saisie manuelle.';
+    statusEl.className = 'apex-status err';
+    camArea.style.display = 'none';
+  }
+}
+
+// Stop APEX scanning
+function stopAPEXScan() {
+  apexScanning = false;
+  if (apexRafId) {
+    cancelAnimationFrame(apexRafId);
+    apexRafId = null;
+  }
+  if (apexCurrentStream) {
+    apexCurrentStream.getTracks().forEach(t => t.stop());
+    apexCurrentStream = null;
+  }
+  const video = document.getElementById('apex-video');
+  if (video) video.srcObject = null;
+  document.getElementById('apex-cam-area').style.display = 'none';
+  const btn = document.getElementById('apex-scan-btn');
+  btn.textContent = '▶ Scanner';
+  btn.onclick = startAPEXScan;
+}
+
+// APEX scanning loop
+function apexTick(video) {
+  if (!apexScanning) return;
+  if (video.readyState === video.HAVE_ENOUGH_DATA) {
+    const scale = Math.min(1, 640 / (video.videoWidth || 640));
+    const w = Math.round((video.videoWidth || 640) * scale);
+    const h = Math.round((video.videoHeight || 480) * scale);
+    if (apexCanvas.width !== w) apexCanvas.width = w;
+    if (apexCanvas.height !== h) apexCanvas.height = h;
+    apexCtx.drawImage(video, 0, 0, w, h);
+    const result = jsQR(apexCtx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'attemptBoth' });
+    if (result?.data) {
+      document.getElementById('apex-found-flash').style.opacity = '1';
+      setTimeout(() => { document.getElementById('apex-found-flash').style.opacity = '0'; }, 250);
+      stopAPEXScan();
+      saveAPEXValue(result.data);
+      return;
+    }
+  }
+  apexRafId = requestAnimationFrame(() => apexTick(video));
+}
+
+// Toggle manual input
+function toggleAPEXManual() {
+  const row = document.getElementById('apex-manual-row');
+  const isShowing = row.style.display !== 'none';
+
+  row.style.display = isShowing ? 'none' : '';
+
+  if (!isShowing) {
+    // Showing the input
+    setTimeout(() => {
+      const input = document.getElementById('apex-manual-input');
+      input.focus();
+      input.select(); // Select any existing text
+    }, 100);
+  }
+}
+
+// Save manual input
+function saveAPEXManual() {
+  const input = document.getElementById('apex-manual-input');
+  const v = input.value.trim();
+
+  // Validation
+  if (!v) {
+    input.style.borderColor = '#ef4444';
+    input.placeholder = '⚠️ Veuillez entrer un numéro!';
+    setTimeout(() => {
+      input.style.borderColor = '';
+      input.placeholder = 'Entrez le numéro...';
+    }, 2000);
+    return;
+  }
+
+  if (!apexActivePosition) {
+    showToast('❌ Aucune position sélectionnée', 'error');
+    return;
+  }
+
+  // Visual feedback - input becomes green
+  input.style.borderColor = '#2e9e56';
+  input.style.background = '#edfaf3';
+
+  // Save
+  saveAPEXValue(v);
+
+  // Reset after a short delay
+  setTimeout(() => {
+    input.value = '';
+    input.style.borderColor = '';
+    input.style.background = '';
+    document.getElementById('apex-manual-row').style.display = 'none';
+  }, 500);
+}
+
+// Save value to database and update UI
+async function saveAPEXValue(value) {
+  if (!apexActivePosition) return;
+
+  const statusEl = document.getElementById('apex-scan-status');
+  statusEl.textContent = 'Enregistrement…';
+  statusEl.className = 'apex-status';
+  statusEl.style.display = '';
+
+  // Find position in allPositions
+  const position = allPositions.find(p => p.code_position === apexActivePosition);
+
+  if (!position) {
+    statusEl.textContent = '❌ Position introuvable';
+    statusEl.className = 'apex-status err';
+    return;
+  }
+
+  try {
+    // Check if piece exists
+    const results = await sbSelect('pieces', `*&no_piece=eq.${encodeURIComponent(value)}`);
+    let piece = results[0];
+    let typeEntretien = null;
+    let raisonEntretien = null;
+    let ancienStatut = null;
+    let isNewPiece = false;
+
+    // === CAS 1: Pièce entièrement nouvelle ===
+    if (!piece) {
+      if (!confirm(`🆕 NOUVELLE PIÈCE: ${value}\n\nConfirmez-vous la mise en production de cette nouvelle pièce ?`)) {
+        statusEl.textContent = '❌ Opération annulée';
+        statusEl.className = 'apex-status err';
+        return;
+      }
+      // Créer directement avec statut "Mise en production"
+      piece = await sbInsert('pieces', {
+        no_piece: value,
+        statut: 'Mise en production',
+        position_id: position.id
+      });
+      await enregistrerAudit({
+        typeEntite: 'pieces',
+        entiteId: piece.id,
+        action: 'creation_nouvelle_piece',
+        apres: piece
+      });
+      await enregistrerHistorique({
+        piece,
+        ancienStatut: null,
+        nouveauStatut: 'Mise en production',
+        typeAction: 'installation_nouvelle',
+        position: position,
+        notes: 'Nouvelle pièce créée et installée'
+      });
+
+      isNewPiece = true;
+      ancienStatut = null;
+    }
+    // === CAS 2: Pièce "Inventaire - Prêt" ===
+    else if (piece.statut === 'Inventaire - Prêt') {
+      // Installation directe, aucune confirmation nécessaire
+      ancienStatut = piece.statut;
+    }
+    // === CAS 3: Pièce "Remisée - Rebutée" ===
+    else if (piece.statut === 'Remisée - Rebutée') {
+      statusEl.textContent = '🚫 Pièce rebutée - Installation interdite';
+      statusEl.className = 'apex-status err';
+      showToast('🚫 Cette pièce est rebutée.\n\nInformer le superviseur ou le groupe technique.', 'error');
+      return;
+    }
+    // === CAS 4: Pièce "Mise en production" (déjà installée ailleurs) ===
+    else if (piece.statut === 'Mise en production') {
+      if (!confirm(`⚠️ ATTENTION\n\nLa pièce ${piece.no_piece} est déjà en production ailleurs.\n\nConfirmez-vous le déplacement vers cette position ?`)) {
+        statusEl.textContent = '❌ Opération annulée';
+        statusEl.className = 'apex-status err';
+        return;
+      }
+      ancienStatut = piece.statut;
+    }
+    // === CAS 5: Autres statuts (Chez Huot, À entretenir) ===
+    else {
+      // Liste des types de maintenance
+      const typesMaintenanceList = [
+        "Entretien général (sablage, test d'huile, test d'eau)",
+        "Huile - changement de gasket",
+        "Huile - débouchage des trous",
+        "Eau - changement de gasket",
+        "Eau - débouchage des trous",
+        "Eau - nettoyage du filtre de coin",
+        "Autre (préciser)"
+      ];
+
+      // Demander quel type de maintenance a été effectué
+      let choixTexte = `🔧 MAINTENANCE REQUISE\n\nLa pièce ${piece.no_piece} est au statut: "${piece.statut}"\n\nQuel type de maintenance a été effectué ?\n\n`;
+      typesMaintenanceList.forEach((type, index) => {
+        choixTexte += `${index + 1}. ${type}\n`;
+      });
+      choixTexte += '\nEntrez le numéro (ou Annuler):';
+
+      const reponse = prompt(choixTexte);
+      if (!reponse) {
+        statusEl.textContent = '❌ Opération annulée';
+        statusEl.className = 'apex-status err';
+        return;
+      }
+
+      const index = parseInt(reponse, 10) - 1;
+      if (isNaN(index) || index < 0 || index >= typesMaintenanceList.length) {
+        statusEl.textContent = '❌ Choix invalide';
+        statusEl.className = 'apex-status err';
+        return;
+      }
+
+      typeEntretien = typesMaintenanceList[index];
+
+      // Si "Autre", demander précision
+      if (typeEntretien.startsWith('Autre')) {
+        raisonEntretien = prompt('Précisez le type de maintenance:');
+        if (!raisonEntretien) {
+          statusEl.textContent = '❌ Opération annulée';
+          statusEl.className = 'apex-status err';
+          return;
+        }
+      }
+
+      ancienStatut = piece.statut;
+    }
+
+    // Si c'est une nouvelle pièce, on a déjà tout fait, on skip l'installation
+    if (isNewPiece) {
+      // Just update display and return
+      apexDataStore[apexActivePosition] = value;
+      const valEl = document.getElementById('apex-val-' + apexActivePosition);
+      if (valEl) valEl.textContent = value.slice(0, 6);
+      const box = document.querySelector(`[data-pos="${apexActivePosition}"]`);
+      if (box) {
+        box.classList.remove('active');
+        box.classList.add('fresh');
+      }
+      statusEl.textContent = '✓ Nouvelle pièce créée et installée';
+      statusEl.className = 'apex-status ok';
+      showToast(`✓ Nouvelle pièce ${value} créée et installée sur ${apexActivePosition}`, 'success');
+      await chargerHistoriqueRecent();
+      await updateAPEXPositions();
+      setTimeout(() => {
+        document.getElementById('apex-scan-section').style.display = 'none';
+        document.getElementById('apex-active-tag').style.display = 'none';
+        document.getElementById('apex-hint-text').style.display = '';
+        apexActivePosition = null;
+        document.querySelectorAll('.apex-position-box').forEach(box => {
+          box.classList.remove('active');
+        });
+      }, 2000);
+      return;
+    }
+
+    // Remove old piece if exists
+    const occupants = await sbSelect('pieces', `*&position_id=eq.${position.id}`);
+    const ancienneInstallee = occupants.find(p => p.id !== piece.id);
+
+    if (ancienneInstallee) {
+      await sbUpdate('pieces', ancienneInstallee.id, {
+        statut: 'Inventaire - À entretenir',
+        position_id: null
+      });
+      await enregistrerHistorique({
+        piece: ancienneInstallee,
+        ancienStatut: 'Mise en production',
+        nouveauStatut: 'Inventaire - À entretenir',
+        typeAction: 'remplacement',
+        position: position,
+        notes: `Remplacée par ${piece.no_piece}`
+      });
+    }
+
+    // Install new piece
+    await sbUpdate('pieces', piece.id, {
+      statut: 'Mise en production',
+      position_id: position.id
+    });
+
+    await enregistrerHistorique({
+      piece,
+      ancienStatut,
+      nouveauStatut: 'Mise en production',
+      typeAction: ancienneInstallee ? 'remplacement' : 'installation',
+      position: position,
+      notes: null
+    });
+
+    await enregistrerAudit({
+      typeEntite: 'pieces',
+      entiteId: piece.id,
+      action: 'installation',
+      avant: { statut: ancienStatut },
+      apres: { statut: 'Mise en production', position_id: position.id }
+    });
+
+    // Si une maintenance a été effectuée, l'enregistrer
+    if (typeEntretien) {
+      await sbInsert('entretiens', {
+        piece_id: piece.id,
+        position_id: position.id,
+        type_entretien: typeEntretien,
+        precision_autre: typeEntretien.startsWith('Autre') ? raisonEntretien : null,
+        raison: raisonEntretien || `Maintenance avant installation - Ancienne statut: ${ancienStatut}`,
+        effectue_par: nomOperateur()
+      });
+    }
+
+    // Save to local store
+    apexDataStore[apexActivePosition] = value;
+
+    // Update display
+    const valEl = document.getElementById('apex-val-' + apexActivePosition);
+    if (valEl) valEl.textContent = value.slice(0, 6);
+
+    // Flash green
+    const box = document.querySelector(`[data-pos="${apexActivePosition}"]`);
+    if (box) {
+      box.classList.remove('active');
+      box.classList.add('fresh');
+    }
+
+    statusEl.textContent = '✓ Enregistré : ' + value;
+    statusEl.className = 'apex-status ok';
+
+    // Show toast
+    showToast(`✓ Pièce ${value} installée sur ${apexActivePosition}`, 'success');
+
+    // Refresh data
+    await chargerHistoriqueRecent();
+    await updateAPEXPositions();
+
+    // Déclencher notification email
+    await triggerEmailNotification(`Pièce ${value} installée sur ${apexActivePosition}`);
+
+    // Auto-hide after 2 seconds
+    setTimeout(() => {
+      document.getElementById('apex-scan-section').style.display = 'none';
+      document.getElementById('apex-active-tag').style.display = 'none';
+      document.getElementById('apex-hint-text').style.display = '';
+      apexActivePosition = null;
+
+      // Clear all active states
+      document.querySelectorAll('.apex-position-box').forEach(box => {
+        box.classList.remove('active');
+      });
+    }, 2000);
+
+  } catch (e) {
+    console.error('Erreur APEX save:', e);
+    statusEl.textContent = '❌ Erreur d\'enregistrement';
+    statusEl.className = 'apex-status err';
+
+    // Show detailed error toast
+    let errorMsg = '❌ Erreur: ';
+    if (e.message.includes('Failed to fetch')) {
+      errorMsg += 'Impossible de se connecter à Supabase. Vérifiez votre connexion.';
+    } else if (e.message.includes('position')) {
+      errorMsg += 'Position introuvable dans la base de données.';
+    } else {
+      errorMsg += e.message || 'Erreur inconnue';
+    }
+    showToast(errorMsg, 'error');
+  }
+}
+
+// Update APEX positions with current data
+async function updateAPEXPositions() {
+  if (!allPositions.length) return;
+
+  // Get DC74 table
+  const dc74Table = allTables.find(t => t.nom === 'DC74');
+  if (!dc74Table) return;
+
+  // Get all pieces for DC74 positions
+  const dc74Positions = allPositions.filter(p => p.table_id === dc74Table.id);
+  const positionIds = dc74Positions.map(p => p.id);
+
+  if (positionIds.length === 0) return;
+
+  try {
+    const pieces = await sbSelect('pieces', `*&position_id=in.(${positionIds.join(',')})`);
+    const piecesByPosition = {};
+    pieces.forEach(p => piecesByPosition[p.position_id] = p);
+
+    // Update each APEX position box
+    dc74Positions.forEach(pos => {
+      const piece = piecesByPosition[pos.id];
+      const valEl = document.getElementById(`apex-val-${pos.code_position}`);
+      if (valEl && piece) {
+        valEl.textContent = piece.no_piece.slice(0, 6);
+        apexDataStore[pos.code_position] = piece.no_piece;
+      }
+
+      // Update box state
+      const box = document.querySelector(`[data-pos="${pos.code_position}"]`);
+      if (box && piece) {
+        box.classList.add('fresh');
+      }
+    });
+  } catch (e) {
+    console.error('Erreur lors de la mise à jour APEX:', e);
+  }
+}
+
+// Initialize on load
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', async () => {
+    await init();
+    // Update APEX positions after init
+    setTimeout(updateAPEXPositions, 500);
+  });
+} else {
+  init().then(() => {
+    setTimeout(updateAPEXPositions, 500);
+  });
+}
