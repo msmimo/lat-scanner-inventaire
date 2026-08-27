@@ -1,7 +1,7 @@
 // Configuration et helpers partages — LAT SCANNER INVENTAIRE
 // A remplir avec le projet Supabase dedie a cet outil (independant de APEX1/APEX2).
-const SUPABASE_URL = 'https://VOTRE-PROJET.supabase.co';
-const SUPABASE_KEY = 'VOTRE_CLE_ANON_PUBLIC';
+const SUPABASE_URL = 'https://oopxhatozrtputqvylsn.supabase.co/rest/v1/';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9vcHhoYXRvenJ0cHV0cXZ5bHNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc3OTE3OTksImV4cCI6MjEwMzM2Nzc5OX0.uf-9JRqgd6NkgoRHGBYA5y2H1_gPMXyQ1rzkbZBv3ps';
 
 const STATUTS = [
   'Inventaire - Prêt',
