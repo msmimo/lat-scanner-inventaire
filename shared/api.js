@@ -102,11 +102,11 @@ async function enregistrerHistorique({ piece, ancienStatut, nouveauStatut, typeA
 }
 
 async function enregistrerAudit({ typeEntite, entiteId, action, avant, apres, raison }) {
-  return sbInsert('audit_logs', {
+  return sbInsert('audit', {
     type_entite: typeEntite,
     entite_id: entiteId,
     action,
-    acteur: nomOperateur(),
+    effectue_par: nomOperateur(),
     avant: avant || null,
     apres: apres || null,
     raison: raison || null
