@@ -548,22 +548,27 @@ async function installerPiece(piece, { force, typeEntretien, raison }) {
   const ancienStatut = piece.statut;
   const anciennePositionId = piece.position_id;
 
-  // ÉTAPE 1: Si cette pièce est déjà installée ailleurs, la retirer de son ancienne position
-  if (anciennePositionId && anciennePositionId !== currentPosition.id) {
-    // La pièce est déjà ailleurs, on va la déplacer
-    // Son historique sera automatiquement clos lors de la création du nouvel historique
-    console.log(`Déplacement de ${piece.no_piece} de ${anciennePositionId} vers ${currentPosition.id}`);
-  }
+  console.log(`[INSTALLATION] Début: Pièce ${piece.no_piece} vers position ${currentPosition.code_position}`);
 
-  // ÉTAPE 2: Retirer la pièce qui occupe actuellement la position cible (si différente)
+  // ÉTAPE 1: Retirer TOUTES les pièces qui occupent actuellement la position cible
+  // (y compris si c'est la même pièce qui y était déjà)
   const occupants = await sbSelect('pieces', `*&position_id=eq.${currentPosition.id}`);
-  const ancienneInstallee = occupants.find(p => p.id !== piece.id);
 
-  if (ancienneInstallee) {
+  console.log(`[INSTALLATION] Trouvé ${occupants.length} occupant(s) à la position ${currentPosition.code_position}`);
+
+  for (const ancienneInstallee of occupants) {
+    // Ne pas traiter la pièce que nous sommes en train d'installer
+    if (ancienneInstallee.id === piece.id) continue;
+
+    console.log(`[INSTALLATION] Retrait de ${ancienneInstallee.no_piece} de ${currentPosition.code_position}`);
+
+    // Mettre à jour la base de données IMMÉDIATEMENT
     await sbUpdate('pieces', ancienneInstallee.id, {
       statut: 'Inventaire - À entretenir',
       position_id: null
     });
+
+    // Créer l'historique pour la pièce remplacée
     await enregistrerHistorique({
       piece: ancienneInstallee,
       ancienStatut: 'Mise en production',
@@ -572,9 +577,28 @@ async function installerPiece(piece, { force, typeEntretien, raison }) {
       position: currentPosition,
       notes: `Remplacée par ${piece.no_piece}`
     });
+
+    console.log(`[INSTALLATION] ${ancienneInstallee.no_piece} → Inventaire - À entretenir`);
   }
 
-  // ÉTAPE 3: Installer la pièce à la nouvelle position
+  // ÉTAPE 2: Vérifier une dernière fois qu'aucune autre pièce n'occupe la position
+  const verificationOccupants = await sbSelect('pieces', `*&position_id=eq.${currentPosition.id}`);
+  const autresPieces = verificationOccupants.filter(p => p.id !== piece.id);
+
+  if (autresPieces.length > 0) {
+    console.error(`[INSTALLATION] ERREUR: ${autresPieces.length} pièce(s) toujours à la position!`);
+    // Forcer le nettoyage
+    for (const autrePiece of autresPieces) {
+      await sbUpdate('pieces', autrePiece.id, {
+        statut: 'Inventaire - À entretenir',
+        position_id: null
+      });
+    }
+  }
+
+  // ÉTAPE 3: Installer la nouvelle pièce
+  console.log(`[INSTALLATION] Installation de ${piece.no_piece} à ${currentPosition.code_position}`);
+
   await sbUpdate('pieces', piece.id, {
     statut: 'Mise en production',
     position_id: currentPosition.id
@@ -1582,7 +1606,8 @@ function clearCache() {
 async function fixDataInconsistencies() {
   if (!confirm('Cette opération va corriger les incohérences dans les données:\n\n' +
     '1. Pièces "Mise en production" sans position → "Inventaire - À entretenir"\n' +
-    '2. Pièces avec position mais pas "Mise en production" → Retirer la position\n\n' +
+    '2. Pièces avec position mais pas "Mise en production" → Retirer la position\n' +
+    '3. Positions avec plusieurs pièces → Garder la plus récente seulement\n\n' +
     'Continuer ?')) {
     return;
   }
@@ -1592,41 +1617,94 @@ async function fixDataInconsistencies() {
   try {
     let fixedCount = 0;
 
-    // Get all pieces
+    // Get all pieces and positions
     const allPieces = await sbSelect('pieces', '*');
+    const allPositions = await sbSelect('positions', '*');
 
+    // Problem 3: Check for duplicate pieces at same position
+    const positionMap = new Map();
     for (const piece of allPieces) {
-      let needsUpdate = false;
-      let updates = {};
+      if (piece.position_id) {
+        if (!positionMap.has(piece.position_id)) {
+          positionMap.set(piece.position_id, []);
+        }
+        positionMap.get(piece.position_id).push(piece);
+      }
+    }
 
-      // Problem 1: "Mise en production" but no position_id
+    // Fix positions with multiple pieces
+    for (const [positionId, pieces] of positionMap.entries()) {
+      if (pieces.length > 1) {
+        console.log(`FIXING: Position ${positionId} has ${pieces.length} pieces!`);
+
+        // Sort by updated_at or created_at to keep the most recent
+        pieces.sort((a, b) => {
+          const dateA = new Date(a.updated_at || a.created_at);
+          const dateB = new Date(b.updated_at || b.created_at);
+          return dateB - dateA; // Most recent first
+        });
+
+        // Keep the first (most recent), remove others
+        const toKeep = pieces[0];
+        const toRemove = pieces.slice(1);
+
+        console.log(`Keeping ${toKeep.no_piece}, removing ${toRemove.length} others`);
+
+        for (const piece of toRemove) {
+          await sbUpdate('pieces', piece.id, {
+            statut: 'Inventaire - À entretenir',
+            position_id: null
+          });
+
+          await enregistrerHistorique({
+            piece,
+            ancienStatut: piece.statut,
+            nouveauStatut: 'Inventaire - À entretenir',
+            typeAction: 'modification_statut',
+            position: null,
+            notes: `Correction: Position occupée par ${toKeep.no_piece}`
+          });
+
+          fixedCount++;
+        }
+      }
+    }
+
+    // Problem 1: "Mise en production" but no position_id
+    for (const piece of allPieces) {
       if (piece.statut === 'Mise en production' && !piece.position_id) {
-        updates.statut = 'Inventaire - À entretenir';
-        needsUpdate = true;
-        console.log(`Fixing ${piece.no_piece}: Mise en production without position`);
-      }
+        await sbUpdate('pieces', piece.id, { statut: 'Inventaire - À entretenir' });
 
-      // Problem 2: Has position_id but not "Mise en production"
-      if (piece.position_id && piece.statut !== 'Mise en production') {
-        updates.position_id = null;
-        needsUpdate = true;
-        console.log(`Fixing ${piece.no_piece}: Has position but status is ${piece.statut}`);
-      }
-
-      if (needsUpdate) {
-        await sbUpdate('pieces', piece.id, updates);
-
-        // Record in history
         await enregistrerHistorique({
           piece,
-          ancienStatut: piece.statut,
-          nouveauStatut: updates.statut || piece.statut,
+          ancienStatut: 'Mise en production',
+          nouveauStatut: 'Inventaire - À entretenir',
           typeAction: 'modification_statut',
           position: null,
-          notes: 'Correction automatique des incohérences'
+          notes: 'Correction: Mise en production sans position'
         });
 
         fixedCount++;
+        console.log(`Fixed ${piece.no_piece}: Mise en production without position`);
+      }
+    }
+
+    // Problem 2: Has position_id but not "Mise en production"
+    for (const piece of allPieces) {
+      if (piece.position_id && piece.statut !== 'Mise en production') {
+        await sbUpdate('pieces', piece.id, { position_id: null });
+
+        await enregistrerHistorique({
+          piece,
+          ancienStatut: piece.statut,
+          nouveauStatut: piece.statut,
+          typeAction: 'modification_statut',
+          position: null,
+          notes: `Correction: Position retirée (statut: ${piece.statut})`
+        });
+
+        fixedCount++;
+        console.log(`Fixed ${piece.no_piece}: Has position but status is ${piece.statut}`);
       }
     }
 
@@ -1637,6 +1715,7 @@ async function fixDataInconsistencies() {
       await chargerStatsDashboard();
       await chargerPiecesParStatut();
       await chargerHistoryTab();
+      await updatePositionSlots();
     } else {
       showToast('✓ Aucune incohérence détectée', 'success');
     }
