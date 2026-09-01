@@ -14,7 +14,9 @@ const pageTitles = {
   scan: 'Scanner',
   dashboard: 'Dashboard',
   pieces: 'Pièces',
-  huot: 'Entrepôt Huot'
+  huot: 'Entrepôt Huot',
+  history: 'History',
+  config: 'Configuration'
 };
 
 // Initialize
@@ -127,6 +129,10 @@ function switchTab(tabName) {
   } else if (tabName === 'huot') {
     chargerPiecesHuot();
     chargerExpeditionsRecentes();
+  } else if (tabName === 'history') {
+    chargerHistoryTab();
+  } else if (tabName === 'config') {
+    chargerConfigTab();
   }
 }
 
@@ -1432,6 +1438,119 @@ async function updateAPEXPositions() {
     });
   } catch (e) {
     console.error('Erreur lors de la mise à jour APEX:', e);
+  }
+}
+
+// History Tab
+let allHistoryData = [];
+
+async function chargerHistoryTab() {
+  try {
+    // Load history data
+    allHistoryData = await sbSelect('historique', '*&order=debut_statut.desc&limit=200');
+
+    // Populate status filter
+    const statusFilter = document.getElementById('history-filter-status');
+    if (statusFilter.options.length === 1) { // Only has default option
+      statusFilter.innerHTML += STATUTS.map(s => `<option value="${s}">${s}</option>`).join('');
+    }
+
+    // Add event listeners
+    document.getElementById('history-filter-piece').addEventListener('input', afficherHistory);
+    document.getElementById('history-filter-status').addEventListener('change', afficherHistory);
+
+    afficherHistory();
+  } catch (e) {
+    console.error('Erreur chargement history:', e);
+    document.getElementById('history-table-body').innerHTML =
+      '<tr><td colspan="5" style="padding:1rem;text-align:center;color:#c33;">Erreur de chargement</td></tr>';
+  }
+}
+
+function afficherHistory() {
+  const filterPiece = document.getElementById('history-filter-piece').value.trim().toLowerCase();
+  const filterStatus = document.getElementById('history-filter-status').value;
+
+  const filtered = allHistoryData.filter(h => {
+    if (filterPiece && !h.no_piece.toLowerCase().includes(filterPiece)) return false;
+    if (filterStatus && h.nouveau_statut !== filterStatus) return false;
+    return true;
+  });
+
+  const tbody = document.getElementById('history-table-body');
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="padding:1rem;text-align:center;color:#888;">Aucun résultat</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(h => {
+    // Only show position if status is "Mise en production"
+    const showPosition = h.nouveau_statut === 'Mise en production';
+    const positionText = showPosition && h.code_position ? h.code_position : '—';
+
+    const startDate = h.debut_statut ? new Date(h.debut_statut).toLocaleString('fr-CA', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+    }) : '—';
+
+    const endDate = h.fin_statut ? new Date(h.fin_statut).toLocaleString('fr-CA', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+    }) : '<span style="color:#999;font-style:italic;">En cours</span>';
+
+    // Badge styling
+    let badgeClass = '';
+    if (h.nouveau_statut === 'Mise en production') badgeClass = 'production';
+    else if (h.nouveau_statut === 'Inventaire - Prêt') badgeClass = 'pret';
+    else if (h.nouveau_statut === 'Inventaire - À entretenir') badgeClass = 'entretien';
+    else if (h.nouveau_statut === 'Chez Huot') badgeClass = 'huot';
+    else if (h.nouveau_statut === 'Remisée - Rebutée') badgeClass = 'rebutee';
+
+    return `
+      <tr style="border-bottom:1px solid #eee;">
+        <td style="padding:0.5rem;"><strong>${h.no_piece || '—'}</strong></td>
+        <td style="padding:0.5rem;">${positionText}</td>
+        <td style="padding:0.5rem;"><span class="badge ${badgeClass}" style="font-size:0.75rem;">${h.nouveau_statut || '—'}</span></td>
+        <td style="padding:0.5rem;font-size:0.8rem;white-space:nowrap;">${startDate}</td>
+        <td style="padding:0.5rem;font-size:0.8rem;white-space:nowrap;">${endDate}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// Config Tab
+async function chargerConfigTab() {
+  // Load operator name
+  const operatorName = localStorage.getItem('lat_operateur') || '';
+  document.getElementById('config-operator-name').value = operatorName;
+
+  // Load statistics
+  try {
+    const pieces = await sbSelect('pieces', '*');
+    const productionCount = pieces.filter(p => p.statut === 'Mise en production').length;
+    const entretienCount = pieces.filter(p => p.statut === 'Inventaire - À entretenir').length;
+
+    document.getElementById('config-stat-total').textContent = pieces.length;
+    document.getElementById('config-stat-production').textContent = productionCount;
+    document.getElementById('config-stat-entretien').textContent = entretienCount;
+  } catch (e) {
+    console.error('Erreur chargement stats:', e);
+  }
+}
+
+function saveOperatorName() {
+  const name = document.getElementById('config-operator-name').value.trim();
+  if (name) {
+    localStorage.setItem('lat_operateur', name);
+    showToast('✓ Nom sauvegardé', 'success');
+  } else {
+    showToast('⚠ Veuillez entrer un nom', 'warning');
+  }
+}
+
+function clearCache() {
+  if (confirm('Voulez-vous vraiment vider le cache et recharger l\'application ?')) {
+    localStorage.clear();
+    window.location.reload(true);
   }
 }
 

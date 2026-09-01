@@ -229,6 +229,66 @@
       </div>
     </div>
   </div>
+
+  <!-- Tab 5: History View -->
+  <div id="tab-history" class="tab-view">
+    <div class="card">
+      <h3>History — Historique complet</h3>
+      <input id="history-filter-piece" type="text" placeholder="Filtrer par No. pièce" inputmode="numeric" style="margin-bottom:1rem;">
+      <select id="history-filter-status" style="width:100%;margin-bottom:1rem;">
+        <option value="">Tous les statuts</option>
+      </select>
+    </div>
+
+    <div class="card">
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+          <thead>
+            <tr style="background:#f5f5f5;">
+              <th style="padding:0.5rem;text-align:left;border-bottom:2px solid #ddd;">No. Pièce</th>
+              <th style="padding:0.5rem;text-align:left;border-bottom:2px solid #ddd;">Position</th>
+              <th style="padding:0.5rem;text-align:left;border-bottom:2px solid #ddd;">Statut</th>
+              <th style="padding:0.5rem;text-align:left;border-bottom:2px solid #ddd;">Start Date</th>
+              <th style="padding:0.5rem;text-align:left;border-bottom:2px solid #ddd;">End Date</th>
+            </tr>
+          </thead>
+          <tbody id="history-table-body">
+            <tr><td colspan="5" style="padding:1rem;text-align:center;color:#888;">Chargement...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab 6: Config View -->
+  <div id="tab-config" class="tab-view">
+    <div class="card">
+      <h3>⚙️ Configuration</h3>
+
+      <label style="display:block;margin-top:1rem;font-weight:600;">Nom de l'opérateur</label>
+      <input id="config-operator-name" type="text" placeholder="Votre nom" style="width:100%;">
+      <button class="btn-primary" onclick="saveOperatorName()" style="margin-top:0.5rem;width:100%;">Sauvegarder le nom</button>
+
+      <label style="display:block;margin-top:2rem;font-weight:600;">Statistiques</label>
+      <div style="background:#f5f5f5;padding:1rem;border-radius:8px;margin-top:0.5rem;">
+        <p style="margin:0.5rem 0;">Total pièces: <strong id="config-stat-total">-</strong></p>
+        <p style="margin:0.5rem 0;">En production: <strong id="config-stat-production">-</strong></p>
+        <p style="margin:0.5rem 0;">À entretenir: <strong id="config-stat-entretien">-</strong></p>
+      </div>
+
+      <label style="display:block;margin-top:2rem;font-weight:600;">Actions</label>
+      <button class="btn-secondary" onclick="window.location.reload()" style="width:100%;margin-top:0.5rem;">🔄 Rafraîchir l'application</button>
+      <button class="btn-secondary" onclick="clearCache()" style="width:100%;margin-top:0.5rem;">🗑️ Vider le cache</button>
+
+      <div style="margin-top:2rem;padding:1rem;background:#e3f2fd;border-radius:8px;">
+        <p style="margin:0;font-size:0.85rem;color:#1565c0;">
+          <strong>LAT Scanner Inventaire</strong><br>
+          Version: 2.0<br>
+          Dernière mise à jour: 2026-09-01
+        </p>
+      </div>
+    </div>
+  </div>
 </main>
 
 <!-- Bottom Navigation -->
@@ -248,6 +308,14 @@
   <button class="nav-item" onclick="switchTab('huot')" data-tab="huot" aria-label="Entrepôt Huot">
     <span class="nav-icon" aria-hidden="true">🏭</span>
     <span class="nav-label">Huot</span>
+  </button>
+  <button class="nav-item" onclick="switchTab('history')" data-tab="history" aria-label="Historique">
+    <span class="nav-icon" aria-hidden="true">📋</span>
+    <span class="nav-label">History</span>
+  </button>
+  <button class="nav-item" onclick="switchTab('config')" data-tab="config" aria-label="Configuration">
+    <span class="nav-icon" aria-hidden="true">⚙️</span>
+    <span class="nav-label">Config</span>
   </button>
 </nav>
 
