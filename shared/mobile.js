@@ -1503,12 +1503,24 @@ function afficherHistory() {
     const positionText = showPosition && h.code_position ? h.code_position : '—';
 
     const startDate = h.debut_statut ? new Date(h.debut_statut).toLocaleString('fr-CA', {
-      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
-    }) : '—';
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).replace(',', '') : '—';
 
     const endDate = h.fin_statut ? new Date(h.fin_statut).toLocaleString('fr-CA', {
-      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
-    }) : '<span style="color:#999;font-style:italic;">En cours</span>';
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).replace(',', '') : '<span style="color:#999;font-style:italic;">En cours</span>';
 
     // Badge styling
     let badgeClass = '';
