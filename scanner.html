@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scanner — LAT Scanner Inventaire</title>
+<link rel="stylesheet" href="shared/style.css">
+</head>
+<body>
+<header class="lat-header">
+  <h1>LAT Scanner Inventaire</h1>
+  <nav class="lat-nav">
+    <a href="index.html">Accueil</a>
+    <a href="scanner.html" class="actif">Scanner</a>
+    <a href="postes.html">Postes</a>
+    <a href="pieces.html">Pièces</a>
+    <a href="entrepot.html">Entrepôt Huot</a>
+    <a href="historique.html">Historique</a>
+    <a href="config.html">Configuration</a>
+  </nav>
+</header>
+<main>
+  <div class="carte">
+    <h2>1. Choisir la position</h2>
+    <label>Table</label>
+    <select id="select-table"></select>
+    <label>Position</label>
+    <select id="select-position"></select>
+    <p id="etat-position" style="font-size:0.9rem;color:#444"></p>
+  </div>
+
+  <div class="carte">
+    <h2>2. Scanner ou saisir la pièce</h2>
+    <button id="bouton-camera" onclick="demarrerCamera()">Scanner</button>
+    <video id="lecteur-video" style="display:none" playsinline></video>
+    <canvas id="canvas-scan" style="display:none"></canvas>
+    <label>Ou saisir manuellement le No. pièce</label>
+    <input id="saisie-manuelle" inputmode="numeric" placeholder="No. pièce">
+    <button class="secondaire" onclick="traiterSaisieManuelle()">Valider la saisie</button>
+    <p id="message-scan"></p>
+  </div>
+
+  <div class="carte">
+    <h2>3. Historique des scans récents</h2>
+    <button class="secondaire" onclick="rafraichirHistorique()">Rafraîchir</button>
+    <div id="historique-container" style="margin-top:1rem;overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:0.9rem;">
+        <thead>
+          <tr style="background:#f5f5f5;text-align:left;">
+            <th style="padding:0.5rem;border-bottom:2px solid #ddd;">No. Pièce</th>
+            <th style="padding:0.5rem;border-bottom:2px solid #ddd;">Date</th>
+            <th style="padding:0.5rem;border-bottom:2px solid #ddd;">Position</th>
+            <th style="padding:0.5rem;border-bottom:2px solid #ddd;">Statut</th>
+          </tr>
+        </thead>
+        <tbody id="historique-tbody">
+          <tr><td colspan="4" style="padding:1rem;text-align:center;color:#888;">Chargement...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<div class="modale-fond" id="modale-erreur" style="display:none">
+  <div class="modale">
+    <h3 class="erreur">Installation impossible</h3>
+    <p id="texte-erreur"></p>
+    <button class="secondaire" onclick="fermerModaleErreur()">Annuler</button>
+    <button class="danger" onclick="ouvrirModaleEntretien()">Forcer la mise en production</button>
+  </div>
+</div>
+
+<div class="modale-fond" id="modale-entretien" style="display:none">
+  <div class="modale">
+    <h3>Type d'entretien requis</h3>
+    <p>Cette pièce sera installée quand même. Précisez le type d'entretien à effectuer.</p>
+    <label>Type d'entretien</label>
+    <select id="select-type-entretien"></select>
+    <label>Précision / raison</label>
+    <textarea id="raison-entretien" rows="3"></textarea>
+    <button class="secondaire" onclick="fermerModaleEntretien()">Annuler</button>
+    <button class="danger" onclick="confirmerInstallationForcee()">Confirmer la mise en production forcée</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<script src="shared/api.js"></script>
+<script>
+let tables = [];
+let positions = [];
+let positionActuelle = null;
+let pieceEnAttente = null;
+let flotCamera = null;
+let animationEnCours = false;
+
+async function init() {
+  tables = await sbSelect('tables_travail', '*&order=nom');
+  document.getElementById('select-table').innerHTML = tables.map(t => `<option value="${t.id}">${t.nom}</option>`).join('');
+  document.getElementById('select-type-entretien').innerHTML = TYPES_ENTRETIEN.map(t => `<option value="${t}">${t}</option>`).join('');
+  document.getElementById('select-table').addEventListener('change', chargerPositions);
+  document.getElementById('select-position').addEventListener('change', afficherEtatPosition);
+  await chargerPositions();
+  await rafraichirHistorique();
+}
+
+async function rafraichirHistorique() {
+  try {
+    const historique = await sbSelect('historique', '*&order=created_at.desc&limit=20');
+    const tbody = document.getElementById('historique-tbody');
+
+    if (!historique || historique.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="padding:1rem;text-align:center;color:#888;">Aucun scan enregistré</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = historique.map(h => {
+      const date = new Date(h.debut_statut || h.created_at);
+      const dateFormatee = date.toLocaleString('fr-CA', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
+      return `
+        <tr style="border-bottom:1px solid #eee;">
+          <td style="padding:0.5rem;">${h.no_piece || '-'}</td>
+          <td style="padding:0.5rem;">${dateFormatee}</td>
+          <td style="padding:0.5rem;">${h.code_position || '-'}</td>
+          <td style="padding:0.5rem;">${h.nouveau_statut || '-'}</td>
+        </tr>
+      `;
+    }).join('');
+  } catch (e) {
+    console.error('Erreur chargement historique:', e);
+    document.getElementById('historique-tbody').innerHTML =
+      '<tr><td colspan="4" style="padding:1rem;text-align:center;color:#c33;">Erreur de chargement</td></tr>';
+  }
+}
+
+async function chargerPositions() {
+  const tableId = document.getElementById('select-table').value;
+  positions = tableId ? await sbSelect('positions', `*&table_id=eq.${tableId}&order=code_position`) : [];
+  document.getElementById('select-position').innerHTML = positions.map(p => `<option value="${p.id}">${p.code_position}</option>`).join('');
+  await afficherEtatPosition();
+}
+
+async function afficherEtatPosition() {
+  const positionId = document.getElementById('select-position').value;
+  positionActuelle = positions.find(p => p.id === positionId) || null;
+  if (!positionActuelle) {
+    document.getElementById('etat-position').textContent = '';
+    return;
+  }
+  const piecesInstallees = await sbSelect('pieces', `*&position_id=eq.${positionActuelle.id}`);
+  document.getElementById('etat-position').textContent = piecesInstallees.length
+    ? `Pièce actuellement installée : ${piecesInstallees[0].no_piece} (${piecesInstallees[0].statut})`
+    : 'Position vide.';
+}
+
+async function demarrerCamera() {
+  const video = document.getElementById('lecteur-video');
+  video.style.display = 'block';
+  try {
+    flotCamera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    video.srcObject = flotCamera;
+    await video.play();
+    animationEnCours = true;
+    requestAnimationFrame(boucleScan);
+  } catch (e) {
+    document.getElementById('message-scan').innerHTML = '<span class="erreur">Caméra indisponible : ' + e.message + '</span>';
+  }
+}
+
+function arreterCamera() {
+  animationEnCours = false;
+  if (flotCamera) flotCamera.getTracks().forEach(t => t.stop());
+  document.getElementById('lecteur-video').style.display = 'none';
+}
+
+function boucleScan() {
+  if (!animationEnCours) return;
+  const video = document.getElementById('lecteur-video');
+  const canvas = document.getElementById('canvas-scan');
+  if (video.readyState === video.HAVE_ENOUGH_DATA) {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(image.data, image.width, image.height);
+    if (code && code.data) {
+      arreterCamera();
+      traiterCode(code.data.trim());
+      return;
+    }
+  }
+  requestAnimationFrame(boucleScan);
+}
+
+function traiterSaisieManuelle() {
+  const valeur = document.getElementById('saisie-manuelle').value.trim();
+  if (!valeur) return;
+  traiterCode(valeur);
+  document.getElementById('saisie-manuelle').value = '';
+}
+
+async function traiterCode(noPiece) {
+  const messageEl = document.getElementById('message-scan');
+  messageEl.textContent = '';
+  if (!positionActuelle) {
+    messageEl.innerHTML = '<span class="erreur">Choisissez une table et une position avant de scanner.</span>';
+    return;
+  }
+  const resultats = await sbSelect('pieces', `*&no_piece=eq.${encodeURIComponent(noPiece)}`);
+  let piece = resultats[0];
+
+  if (!piece) {
+    const creer = confirm(`Pièce inconnue : ${noPiece}. La créer avec le statut "Inventaire - Prêt" ?`);
+    if (!creer) return;
+    piece = await sbInsert('pieces', { no_piece: noPiece, statut: 'Inventaire - Prêt' });
+    await enregistrerAudit({ typeEntite: 'pieces', entiteId: piece.id, action: 'creation', apres: piece });
+  }
+
+  pieceEnAttente = piece;
+
+  if (piece.statut === 'Inventaire - Prêt') {
+    await installer(piece, { force: false });
+  } else {
+    document.getElementById('texte-erreur').textContent =
+      `La pièce ${piece.no_piece} est actuellement au statut "${piece.statut}". Seules les pièces "Inventaire - Prêt" peuvent être installées.`;
+    document.getElementById('modale-erreur').style.display = 'flex';
+  }
+}
+
+function fermerModaleErreur() {
+  document.getElementById('modale-erreur').style.display = 'none';
+  pieceEnAttente = null;
+}
+
+function ouvrirModaleEntretien() {
+  document.getElementById('modale-erreur').style.display = 'none';
+  document.getElementById('modale-entretien').style.display = 'flex';
+}
+
+function fermerModaleEntretien() {
+  document.getElementById('modale-entretien').style.display = 'none';
+  pieceEnAttente = null;
+}
+
+async function confirmerInstallationForcee() {
+  const typeEntretien = document.getElementById('select-type-entretien').value;
+  const raison = document.getElementById('raison-entretien').value.trim();
+  document.getElementById('modale-entretien').style.display = 'none';
+  await installer(pieceEnAttente, { force: true, typeEntretien, raison });
+  document.getElementById('raison-entretien').value = '';
+}
+
+async function installer(piece, { force, typeEntretien, raison }) {
+  const messageEl = document.getElementById('message-scan');
+  const ancienStatutPiece = piece.statut;
+
+  const occupants = await sbSelect('pieces', `*&position_id=eq.${positionActuelle.id}`);
+  const ancienneInstallee = occupants.find(p => p.id !== piece.id);
+
+  if (ancienneInstallee) {
+    await sbUpdate('pieces', ancienneInstallee.id, { statut: 'Inventaire - À entretenir', position_id: null });
+    await enregistrerHistorique({
+      piece: ancienneInstallee,
+      ancienStatut: 'Mise en production',
+      nouveauStatut: 'Inventaire - À entretenir',
+      typeAction: 'remplacement',
+      position: positionActuelle,
+      notes: `Remplacée par ${piece.no_piece}`
+    });
+  }
+
+  await sbUpdate('pieces', piece.id, { statut: 'Mise en production', position_id: positionActuelle.id });
+  await enregistrerHistorique({
+    piece,
+    ancienStatut: ancienStatutPiece,
+    nouveauStatut: 'Mise en production',
+    typeAction: force ? 'installation_forcee' : (ancienneInstallee ? 'remplacement' : 'installation'),
+    position: positionActuelle,
+    notes: force ? `Forcé — ${typeEntretien} — ${raison}` : null
+  });
+
+  if (force) {
+    await sbInsert('entretiens', {
+      piece_id: piece.id,
+      position_id: positionActuelle.id,
+      type_entretien: typeEntretien,
+      precision_autre: typeEntretien.startsWith('Autre') ? raison : null,
+      raison,
+      effectue_par: nomOperateur()
+    });
+  }
+
+  await enregistrerAudit({
+    typeEntite: 'pieces',
+    entiteId: piece.id,
+    action: force ? 'installation_forcee' : 'installation',
+    avant: { statut: ancienStatutPiece },
+    apres: { statut: 'Mise en production', position_id: positionActuelle.id }
+  });
+
+  messageEl.innerHTML = `<strong style="color:#1c6b31">Pièce ${piece.no_piece} installée sur ${positionActuelle.code_position}.</strong>`;
+  pieceEnAttente = null;
+  await afficherEtatPosition();
+  await rafraichirHistorique();
+}
+
+init();
+</script>
+</body>
+</html>
