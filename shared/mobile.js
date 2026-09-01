@@ -546,8 +546,16 @@ async function confirmerInstallationForcee() {
 async function installerPiece(piece, { force, typeEntretien, raison }) {
   const messageEl = document.getElementById('mobile-message-scan');
   const ancienStatut = piece.statut;
+  const anciennePositionId = piece.position_id;
 
-  // Remove old piece if exists
+  // ÉTAPE 1: Si cette pièce est déjà installée ailleurs, la retirer de son ancienne position
+  if (anciennePositionId && anciennePositionId !== currentPosition.id) {
+    // La pièce est déjà ailleurs, on va la déplacer
+    // Son historique sera automatiquement clos lors de la création du nouvel historique
+    console.log(`Déplacement de ${piece.no_piece} de ${anciennePositionId} vers ${currentPosition.id}`);
+  }
+
+  // ÉTAPE 2: Retirer la pièce qui occupe actuellement la position cible (si différente)
   const occupants = await sbSelect('pieces', `*&position_id=eq.${currentPosition.id}`);
   const ancienneInstallee = occupants.find(p => p.id !== piece.id);
 
@@ -566,7 +574,7 @@ async function installerPiece(piece, { force, typeEntretien, raison }) {
     });
   }
 
-  // Install new piece
+  // ÉTAPE 3: Installer la pièce à la nouvelle position
   await sbUpdate('pieces', piece.id, {
     statut: 'Mise en production',
     position_id: currentPosition.id
@@ -606,6 +614,11 @@ async function installerPiece(piece, { force, typeEntretien, raison }) {
   await afficherEtatPositionMobile();
   await updatePositionSlots(); // Update visual status
   await chargerHistoriqueRecent();
+
+  // Refresh history tab if it exists
+  if (typeof afficherHistory === 'function' && allHistoryData.length > 0) {
+    await chargerHistoryTab();
+  }
 
   // Clear input and hide scanning section after success
   document.getElementById('mobile-manual-input').value = '';
@@ -1551,6 +1564,74 @@ function clearCache() {
   if (confirm('Voulez-vous vraiment vider le cache et recharger l\'application ?')) {
     localStorage.clear();
     window.location.reload(true);
+  }
+}
+
+async function fixDataInconsistencies() {
+  if (!confirm('Cette opération va corriger les incohérences dans les données:\n\n' +
+    '1. Pièces "Mise en production" sans position → "Inventaire - À entretenir"\n' +
+    '2. Pièces avec position mais pas "Mise en production" → Retirer la position\n\n' +
+    'Continuer ?')) {
+    return;
+  }
+
+  showToast('🔧 Réparation en cours...', 'info');
+
+  try {
+    let fixedCount = 0;
+
+    // Get all pieces
+    const allPieces = await sbSelect('pieces', '*');
+
+    for (const piece of allPieces) {
+      let needsUpdate = false;
+      let updates = {};
+
+      // Problem 1: "Mise en production" but no position_id
+      if (piece.statut === 'Mise en production' && !piece.position_id) {
+        updates.statut = 'Inventaire - À entretenir';
+        needsUpdate = true;
+        console.log(`Fixing ${piece.no_piece}: Mise en production without position`);
+      }
+
+      // Problem 2: Has position_id but not "Mise en production"
+      if (piece.position_id && piece.statut !== 'Mise en production') {
+        updates.position_id = null;
+        needsUpdate = true;
+        console.log(`Fixing ${piece.no_piece}: Has position but status is ${piece.statut}`);
+      }
+
+      if (needsUpdate) {
+        await sbUpdate('pieces', piece.id, updates);
+
+        // Record in history
+        await enregistrerHistorique({
+          piece,
+          ancienStatut: piece.statut,
+          nouveauStatut: updates.statut || piece.statut,
+          typeAction: 'modification_statut',
+          position: null,
+          notes: 'Correction automatique des incohérences'
+        });
+
+        fixedCount++;
+      }
+    }
+
+    if (fixedCount > 0) {
+      showToast(`✓ ${fixedCount} pièce(s) corrigée(s)`, 'success');
+
+      // Refresh all data
+      await chargerStatsDashboard();
+      await chargerPiecesParStatut();
+      await chargerHistoryTab();
+    } else {
+      showToast('✓ Aucune incohérence détectée', 'success');
+    }
+
+  } catch (e) {
+    console.error('Erreur lors de la réparation:', e);
+    showToast('❌ Erreur lors de la réparation', 'error');
   }
 }
 
