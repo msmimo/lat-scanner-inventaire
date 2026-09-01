@@ -267,14 +267,16 @@ async function installer(piece, { force, typeEntretien, raison }) {
     const anciennesPositions = await sbSelect('positions', `*&id=eq.${anciennePositionId}`);
     const anciennePosition = anciennesPositions[0];
 
-    await enregistrerHistorique({
-      piece,
-      ancienStatut: piece.statut,
-      nouveauStatut: 'Inventaire - Prêt',
-      typeAction: 'remplacement',
-      position: anciennePosition,
-      notes: `Déplacée vers ${positionActuelle.code_position}`
-    });
+    if (anciennePosition) {
+      await enregistrerHistorique({
+        piece,
+        ancienStatut: piece.statut,
+        nouveauStatut: 'Inventaire - Prêt',
+        typeAction: 'remplacement',
+        position: anciennePosition,
+        notes: `Déplacée vers ${positionActuelle.code_position}`
+      });
+    }
   }
 
   // ÉTAPE 2: Retirer la pièce qui occupe actuellement la position cible (si différente)
