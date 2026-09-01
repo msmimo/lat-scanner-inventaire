@@ -260,26 +260,7 @@ async function confirmerInstallationForcee() {
 async function installer(piece, { force, typeEntretien, raison }) {
   const messageEl = document.getElementById('message-scan');
   const ancienStatutPiece = piece.statut;
-  const anciennePositionId = piece.position_id;
 
-  // ÉTAPE 1: Si cette pièce est déjà installée ailleurs, la retirer de son ancienne position
-  if (anciennePositionId && anciennePositionId !== positionActuelle.id) {
-    const anciennesPositions = await sbSelect('positions', `*&id=eq.${anciennePositionId}`);
-    const anciennePosition = anciennesPositions[0];
-
-    if (anciennePosition) {
-      await enregistrerHistorique({
-        piece,
-        ancienStatut: piece.statut,
-        nouveauStatut: 'Inventaire - Prêt',
-        typeAction: 'remplacement',
-        position: anciennePosition,
-        notes: `Déplacée vers ${positionActuelle.code_position}`
-      });
-    }
-  }
-
-  // ÉTAPE 2: Retirer la pièce qui occupe actuellement la position cible (si différente)
   const occupants = await sbSelect('pieces', `*&position_id=eq.${positionActuelle.id}`);
   const ancienneInstallee = occupants.find(p => p.id !== piece.id);
 
@@ -295,7 +276,6 @@ async function installer(piece, { force, typeEntretien, raison }) {
     });
   }
 
-  // ÉTAPE 3: Installer la pièce à la nouvelle position
   await sbUpdate('pieces', piece.id, { statut: 'Mise en production', position_id: positionActuelle.id });
   await enregistrerHistorique({
     piece,
