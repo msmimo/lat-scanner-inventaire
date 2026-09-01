@@ -656,14 +656,21 @@ async function installerPiece(piece, { force, typeEntretien, raison }) {
   showToast(`✓ Pièce ${piece.no_piece} installée sur ${currentPosition.code_position}`, 'success');
   messageEl.innerHTML = '';  // Clear inline message
   pendingPiece = null;
+
+  console.log('[INSTALLATION] Rafraîchissement de l\'interface...');
+
+  // Refresh visual displays in order
   await afficherEtatPositionMobile();
   await updatePositionSlots(); // Update visual status
+  await updateAPEXPositions(); // IMPORTANT: Update APEX visual grid
   await chargerHistoriqueRecent();
 
   // Refresh history tab if it exists
   if (typeof afficherHistory === 'function' && allHistoryData.length > 0) {
     await chargerHistoryTab();
   }
+
+  console.log('[INSTALLATION] ✓ Installation complète');
 
   // Clear input and hide scanning section after success
   document.getElementById('mobile-manual-input').value = '';
@@ -1464,6 +1471,8 @@ async function saveAPEXValue(value) {
 async function updateAPEXPositions() {
   if (!allPositions.length) return;
 
+  console.log('[UPDATE APEX] Début de la mise à jour des positions APEX');
+
   // Get DC74 table
   const dc74Table = allTables.find(t => t.nom === 'DC74');
   if (!dc74Table) return;
@@ -1475,25 +1484,49 @@ async function updateAPEXPositions() {
   if (positionIds.length === 0) return;
 
   try {
-    const pieces = await sbSelect('pieces', `*&position_id=in.(${positionIds.join(',')})`);
+    // Requête avec filtre statut pour n'obtenir que les pièces "Mise en production"
+    const pieces = await sbSelect('pieces', `*&position_id=in.(${positionIds.join(',')})&statut=eq.Mise en production`);
+
+    console.log(`[UPDATE APEX] Trouvé ${pieces.length} pièce(s) en production`);
+
     const piecesByPosition = {};
-    pieces.forEach(p => piecesByPosition[p.position_id] = p);
+    pieces.forEach(p => {
+      piecesByPosition[p.position_id] = p;
+      console.log(`[UPDATE APEX] ${p.no_piece} à position_id ${p.position_id}`);
+    });
 
     // Update each APEX position box
     dc74Positions.forEach(pos => {
       const piece = piecesByPosition[pos.id];
       const valEl = document.getElementById(`apex-val-${pos.code_position}`);
-      if (valEl && piece) {
-        valEl.textContent = piece.no_piece.slice(0, 6);
-        apexDataStore[pos.code_position] = piece.no_piece;
-      }
-
-      // Update box state
       const box = document.querySelector(`[data-pos="${pos.code_position}"]`);
-      if (box && piece) {
-        box.classList.add('fresh');
+
+      if (valEl) {
+        if (piece) {
+          // Position occupée
+          valEl.textContent = piece.no_piece.slice(0, 6);
+          apexDataStore[pos.code_position] = piece.no_piece;
+          console.log(`[UPDATE APEX] ${pos.code_position} = ${piece.no_piece}`);
+
+          if (box) {
+            box.classList.add('fresh');
+            box.classList.remove('empty');
+          }
+        } else {
+          // Position vide - IMPORTANT: effacer l'affichage
+          valEl.textContent = '';
+          delete apexDataStore[pos.code_position];
+          console.log(`[UPDATE APEX] ${pos.code_position} = VIDE`);
+
+          if (box) {
+            box.classList.remove('fresh');
+            box.classList.add('empty');
+          }
+        }
       }
     });
+
+    console.log('[UPDATE APEX] Mise à jour terminée');
   } catch (e) {
     console.error('Erreur lors de la mise à jour APEX:', e);
   }
