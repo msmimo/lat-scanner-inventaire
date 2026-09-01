@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Historique — LAT Scanner Inventaire</title>
+<link rel="stylesheet" href="shared/style.css">
+</head>
+<body>
+<header class="lat-header">
+  <h1>LAT Scanner Inventaire</h1>
+  <nav class="lat-nav">
+    <a href="index.html">Accueil</a>
+    <a href="scanner.html">Scanner</a>
+    <a href="postes.html">Postes</a>
+    <a href="pieces.html">Pièces</a>
+    <a href="entrepot.html">Entrepôt Huot</a>
+    <a href="historique.html" class="actif">Historique</a>
+    <a href="config.html">Configuration</a>
+  </nav>
+</header>
+<main>
+  <div class="carte">
+    <h2>Instantané par date/heure</h2>
+    <label>Table</label>
+    <select id="instantane-table"></select>
+    <label>Date et heure</label>
+    <input id="instantane-date" type="datetime-local">
+    <button onclick="afficherInstantane()">Afficher l'état à ce moment</button>
+    <div class="grille-positions" id="grille-instantane" style="margin-top:14px"></div>
+  </div>
+
+  <div class="carte">
+    <h2>Journal d'historique</h2>
+    <label>Filtrer par No. pièce</label>
+    <input id="filtre-piece" placeholder="ex. 1234">
+    <button class="secondaire" onclick="chargerHistorique()">Rechercher</button>
+    <table class="tableau-lat">
+      <thead><tr><th>No. pièce</th><th>Action</th><th>Ancien</th><th>Nouveau</th><th>Position</th><th>Opérateur</th><th>Début</th><th>Fin</th><th></th></tr></thead>
+      <tbody id="corps-tableau"></tbody>
+    </table>
+  </div>
+</main>
+<script src="shared/api.js"></script>
+<script>
+let positionsCache = [];
+
+async function init() {
+  const tables = await sbSelect('tables_travail', '*&order=nom');
+  document.getElementById('instantane-table').innerHTML = tables.map(t => `<option value="${t.id}">${t.nom}</option>`).join('');
+  positionsCache = await sbSelect('positions', '*');
+  await chargerHistorique();
+}
+
+async function afficherInstantane() {
+  const tableId = document.getElementById('instantane-table').value;
+  const dateValeur = document.getElementById('instantane-date').value;
+  if (!tableId || !dateValeur) return alert('Choisissez une table et une date/heure.');
+  const moment = new Date(dateValeur).toISOString();
+
+  const positionsTable = positionsCache.filter(p => p.table_id === tableId);
+  const grille = document.getElementById('grille-instantane');
+  grille.innerHTML = '<p>Chargement...</p>';
+
+  const cases = await Promise.all(positionsTable.map(async (pos) => {
+    const lignes = await sbSelect(
+      'historique',
+      `*&position_id=eq.${pos.id}&nouveau_statut=eq.${encodeURIComponent('Mise en production')}&debut_statut=lte.${encodeURIComponent(moment)}&order=debut_statut.desc&limit=10`
+    );
+    const active = lignes.find(l => !l.fin_statut || l.fin_statut > moment);
+    return `<div class="case-position ${active ? 'production' : 'vide'}">
+      <div class="code">${pos.code_position}</div>
+      <div class="piece">${active ? active.no_piece : '—'}</div>
+      <div class="statut">${active ? 'Installée à ce moment' : 'Vide à ce moment'}</div>
+    </div>`;
+  }));
+  grille.innerHTML = cases.join('') || '<p>Aucune position pour cette table.</p>';
+}
+
+async function chargerHistorique() {
+  const noPiece = document.getElementById('filtre-piece').value.trim();
+  const filtre = noPiece ? `&no_piece=eq.${encodeURIComponent(noPiece)}` : '';
+  const lignes = await sbSelect('historique', `*${filtre}&order=debut_statut.desc&limit=100`);
+
+  document.getElementById('corps-tableau').innerHTML = lignes.map(l => `<tr>
+    <td>${l.no_piece}</td>
+    <td>${l.type_action}</td>
+    <td>${l.ancien_statut || ''}</td>
+    <td>${l.nouveau_statut}</td>
+    <td>${l.code_position || ''}</td>
+    <td>${l.operateur || ''}</td>
+    <td>${new Date(l.debut_statut).toLocaleString('fr-CA')}</td>
+    <td>${l.fin_statut ? new Date(l.fin_statut).toLocaleString('fr-CA') : ''}</td>
+    <td><button class="danger" style="width:auto" onclick="supprimerLigne('${l.id}')">Supprimer</button></td>
+  </tr>`).join('') || '<tr><td colspan="9">Aucun enregistrement.</td></tr>';
+}
+
+async function supprimerLigne(id) {
+  const raison = prompt('Raison de la suppression (obligatoire pour l\'audit) :');
+  if (!raison) return;
+  const lignes = await sbSelect('historique', `*&id=eq.${id}`);
+  await sbDelete('historique', id);
+  await enregistrerAudit({
+    typeEntite: 'historique',
+    entiteId: id,
+    action: 'suppression',
+    avant: lignes[0],
+    raison
+  });
+  await chargerHistorique();
+}
+
+init();
+</script>
+</body>
+</html>

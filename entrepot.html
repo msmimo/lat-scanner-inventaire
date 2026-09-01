@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Entrepôt Huot — LAT Scanner Inventaire</title>
+<link rel="stylesheet" href="shared/style.css">
+</head>
+<body>
+<header class="lat-header">
+  <h1>LAT Scanner Inventaire</h1>
+  <nav class="lat-nav">
+    <a href="index.html">Accueil</a>
+    <a href="scanner.html">Scanner</a>
+    <a href="postes.html">Postes</a>
+    <a href="pieces.html">Pièces</a>
+    <a href="entrepot.html" class="actif">Entrepôt Huot</a>
+    <a href="historique.html">Historique</a>
+    <a href="config.html">Configuration</a>
+  </nav>
+</header>
+<main>
+  <div class="carte">
+    <h2>Expédier une pièce vers Huot</h2>
+    <label>No. pièce</label>
+    <input id="saisie-piece" inputmode="numeric" placeholder="Scanner ou saisir le No. pièce">
+    <button onclick="expedier()">Confirmer l'expédition vers Huot</button>
+    <p id="message-expedition"></p>
+  </div>
+  <div class="carte">
+    <h2>Expéditions récentes</h2>
+    <table class="tableau-lat">
+      <thead><tr><th>No. pièce</th><th>Expédié le</th><th>Par</th><th></th></tr></thead>
+      <tbody id="corps-tableau"></tbody>
+    </table>
+  </div>
+</main>
+<script src="shared/api.js"></script>
+<script>
+async function expedier() {
+  const noPiece = document.getElementById('saisie-piece').value.trim();
+  const messageEl = document.getElementById('message-expedition');
+  messageEl.textContent = '';
+  if (!noPiece) return;
+
+  const resultats = await sbSelect('pieces', `*&no_piece=eq.${encodeURIComponent(noPiece)}`);
+  const piece = resultats[0];
+  if (!piece) {
+    messageEl.innerHTML = '<span class="erreur">Pièce inconnue : ' + noPiece + '</span>';
+    return;
+  }
+
+  const ancienStatut = piece.statut;
+  await sbUpdate('pieces', piece.id, { statut: 'Chez Huot', position_id: null });
+  await sbInsert('expeditions_huot', {
+    piece_id: piece.id,
+    no_piece: piece.no_piece,
+    expedie_par: nomOperateur()
+  });
+  await enregistrerHistorique({
+    piece,
+    ancienStatut,
+    nouveauStatut: 'Chez Huot',
+    typeAction: 'expedition_huot',
+    position: null,
+    notes: 'Expédiée vers Huot depuis le module entrepôt'
+  });
+  await enregistrerAudit({
+    typeEntite: 'pieces',
+    entiteId: piece.id,
+    action: 'expedition_huot',
+    avant: { statut: ancienStatut },
+    apres: { statut: 'Chez Huot' }
+  });
+
+  messageEl.innerHTML = `<strong style="color:#1c6b31">${piece.no_piece} marquée "Chez Huot".</strong>`;
+  document.getElementById('saisie-piece').value = '';
+  await chargerExpeditions();
+}
+
+async function chargerExpeditions() {
+  const expeditions = await sbSelect('expeditions_huot', '*&supprime=eq.false&order=expedie_le.desc&limit=50');
+  document.getElementById('corps-tableau').innerHTML = expeditions.map(e => `<tr>
+    <td>${e.no_piece}</td>
+    <td>${new Date(e.expedie_le).toLocaleString('fr-CA')}</td>
+    <td>${e.expedie_par || ''}</td>
+    <td><button class="danger" style="width:auto" onclick="supprimerExpedition('${e.id}')">Supprimer (erreur de saisie)</button></td>
+  </tr>`).join('') || '<tr><td colspan="4">Aucune expédition.</td></tr>';
+}
+
+async function supprimerExpedition(id) {
+  const raison = prompt('Raison de la suppression (obligatoire pour l\'audit) :');
+  if (!raison) return;
+  await sbUpdate('expeditions_huot', id, { supprime: true });
+  await enregistrerAudit({
+    typeEntite: 'expeditions_huot',
+    entiteId: id,
+    action: 'suppression',
+    raison
+  });
+  await chargerExpeditions();
+}
+
+chargerExpeditions();
+</script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Postes — LAT Scanner Inventaire</title>
+<link rel="stylesheet" href="shared/style.css">
+</head>
+<body>
+<header class="lat-header">
+  <h1>LAT Scanner Inventaire</h1>
+  <nav class="lat-nav">
+    <a href="index.html">Accueil</a>
+    <a href="scanner.html">Scanner</a>
+    <a href="postes.html" class="actif">Postes</a>
+    <a href="pieces.html">Pièces</a>
+    <a href="entrepot.html">Entrepôt Huot</a>
+    <a href="historique.html">Historique</a>
+    <a href="config.html">Configuration</a>
+  </nav>
+</header>
+<main>
+  <div class="carte">
+    <label>Table</label>
+    <select id="select-table"></select>
+  </div>
+  <div class="carte">
+    <h2>État des positions</h2>
+    <div class="grille-positions" id="grille"></div>
+  </div>
+</main>
+<script src="shared/api.js"></script>
+<script>
+function classeStatut(statut) {
+  if (statut === 'Inventaire - Prêt') return 'pret';
+  if (statut === 'Mise en production') return 'production';
+  if (statut === 'Inventaire - À entretenir') return 'entretien';
+  return '';
+}
+
+async function init() {
+  const tables = await sbSelect('tables_travail', '*&order=nom');
+  document.getElementById('select-table').innerHTML = tables.map(t => `<option value="${t.id}">${t.nom}</option>`).join('');
+  document.getElementById('select-table').addEventListener('change', chargerGrille);
+  await chargerGrille();
+}
+
+async function chargerGrille() {
+  const tableId = document.getElementById('select-table').value;
+  const grille = document.getElementById('grille');
+  if (!tableId) { grille.innerHTML = '<p>Aucune table configurée.</p>'; return; }
+
+  const positions = await sbSelect('positions', `*&table_id=eq.${tableId}&order=code_position`);
+  const pieces = await sbSelect('pieces', 'id,no_piece,statut,position_id');
+
+  grille.innerHTML = positions.map(p => {
+    const piece = pieces.find(pc => pc.position_id === p.id);
+    const classe = piece ? classeStatut(piece.statut) : 'vide';
+    return `<div class="case-position ${classe}">
+      <div class="code">${p.code_position}</div>
+      <div class="piece">${piece ? piece.no_piece : '—'}</div>
+      <div class="statut">${piece ? piece.statut : 'Vide'}</div>
+    </div>`;
+  }).join('') || '<p>Aucune position pour cette table.</p>';
+}
+
+init();
+</script>
+</body>
+</html>

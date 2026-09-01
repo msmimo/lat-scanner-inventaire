@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>设计2：Material Design 3</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Roboto', sans-serif;
+  background: #faf8ff;
+  min-height: 100vh;
+  padding-bottom: 80px;
+}
+
+/* Header */
+.header {
+  background: #6750A4;
+  color: white;
+  padding: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.header h1 { font-size: 20px; font-weight: 500; }
+.settings-btn {
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+/* Info Card */
+.info-card {
+  margin: 16px;
+  padding: 20px;
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.info-card h3 {
+  font-size: 14px;
+  color: #6750A4;
+  margin-bottom: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.selected-position {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 24px;
+  color: #1c1b1f;
+  margin-top: 8px;
+}
+.status-chip {
+  display: inline-block;
+  background: #e8f5e9;
+  color: #2e7d32;
+  padding: 4px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+/* Position Grid */
+.position-container {
+  margin: 16px;
+}
+.grid-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.position-btn {
+  aspect-ratio: 1;
+  background: white;
+  border: 2px solid #e0e0e0;
+  border-radius: 12px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #1c1b1f;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  transition: all 0.2s;
+}
+.position-btn:active { transform: scale(0.95); }
+.position-btn.selected {
+  background: #6750A4;
+  color: white;
+  border-color: #6750A4;
+  box-shadow: 0 4px 12px rgba(103,80,164,0.3);
+}
+.position-btn.scanned {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border-color: #66bb6a;
+}
+
+/* Action Button */
+.scan-button {
+  margin: 0 16px 16px;
+  width: calc(100% - 32px);
+  height: 56px;
+  background: #6750A4;
+  color: white;
+  border: none;
+  border-radius: 28px;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(103,80,164,0.3);
+  transition: all 0.2s;
+}
+.scan-button:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 8px rgba(103,80,164,0.3);
+}
+
+/* Bottom Nav */
+.bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: white;
+  border-top: 1px solid #e0e0e0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  height: 72px;
+  box-shadow: 0 -2px 8px rgba(0,0,0,0.05);
+}
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: #49454f;
+  font-size: 12px;
+  cursor: pointer;
+}
+.nav-item.active { color: #6750A4; }
+.nav-icon { font-size: 24px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Scanner DC74</h1>
+  <button class="settings-btn">⚙️</button>
+</div>
+
+<div class="info-card">
+  <h3>Position sélectionnée</h3>
+  <div class="selected-position">
+    🔵 M3 - #1234567
+  </div>
+  <span class="status-chip">En production</span>
+</div>
+
+<div class="position-container">
+  <div class="grid-row">
+    <button class="position-btn">M1</button>
+    <button class="position-btn">M2</button>
+    <button class="position-btn selected">M3</button>
+    <button class="position-btn">M4</button>
+    <button class="position-btn">M5</button>
+  </div>
+  <div class="grid-row">
+    <button class="position-btn">S1</button>
+    <button class="position-btn scanned">S2</button>
+    <button class="position-btn">S3</button>
+    <button class="position-btn">S4</button>
+    <button class="position-btn">S5</button>
+  </div>
+</div>
+
+<button class="scan-button">📷 Ouvrir le scanner</button>
+
+<nav class="bottom-nav">
+  <button class="nav-item active">
+    <span class="nav-icon">📷</span>
+    <span>Scan</span>
+  </button>
+  <button class="nav-item">
+    <span class="nav-icon">📊</span>
+    <span>Dashboard</span>
+  </button>
+  <button class="nav-item">
+    <span class="nav-icon">📦</span>
+    <span>Pièces</span>
+  </button>
+  <button class="nav-item">
+    <span class="nav-icon">🏭</span>
+    <span>Huot</span>
+  </button>
+</nav>
+
+</body>
+</html>
