@@ -549,24 +549,31 @@ async function installerPiece(piece, { force, typeEntretien, raison }) {
   const anciennePositionId = piece.position_id;
 
   console.log(`[INSTALLATION] Début: Pièce ${piece.no_piece} vers position ${currentPosition.code_position}`);
+  console.log(`[INSTALLATION] Position ID: ${currentPosition.id}`);
 
   // ÉTAPE 1: Retirer TOUTES les pièces qui occupent actuellement la position cible
-  // (y compris si c'est la même pièce qui y était déjà)
   const occupants = await sbSelect('pieces', `*&position_id=eq.${currentPosition.id}`);
 
   console.log(`[INSTALLATION] Trouvé ${occupants.length} occupant(s) à la position ${currentPosition.code_position}`);
+  let pieceRemplacee = false;
 
+  // Traiter toutes les pièces occupantes une par une
   for (const ancienneInstallee of occupants) {
     // Ne pas traiter la pièce que nous sommes en train d'installer
-    if (ancienneInstallee.id === piece.id) continue;
+    if (ancienneInstallee.id === piece.id) {
+      console.log(`[INSTALLATION] ${ancienneInstallee.no_piece} est déjà cette position, skip`);
+      continue;
+    }
 
-    console.log(`[INSTALLATION] Retrait de ${ancienneInstallee.no_piece} de ${currentPosition.code_position}`);
+    console.log(`[INSTALLATION] RETRAIT de ${ancienneInstallee.no_piece} (ID: ${ancienneInstallee.id}) de ${currentPosition.code_position}`);
 
     // Mettre à jour la base de données IMMÉDIATEMENT
-    await sbUpdate('pieces', ancienneInstallee.id, {
+    const updateResult = await sbUpdate('pieces', ancienneInstallee.id, {
       statut: 'Inventaire - À entretenir',
       position_id: null
     });
+
+    console.log(`[INSTALLATION] Mise à jour effectuée pour ${ancienneInstallee.no_piece}:`, updateResult);
 
     // Créer l'historique pour la pièce remplacée
     await enregistrerHistorique({
@@ -578,17 +585,28 @@ async function installerPiece(piece, { force, typeEntretien, raison }) {
       notes: `Remplacée par ${piece.no_piece}`
     });
 
-    console.log(`[INSTALLATION] ${ancienneInstallee.no_piece} → Inventaire - À entretenir`);
+    console.log(`[INSTALLATION] ✓ ${ancienneInstallee.no_piece} → Inventaire - À entretenir`);
+    pieceRemplacee = true;
   }
 
-  // ÉTAPE 2: Vérifier une dernière fois qu'aucune autre pièce n'occupe la position
+  // ÉTAPE 2: Petite pause pour s'assurer que les mises à jour sont propagées
+  if (pieceRemplacee) {
+    console.log(`[INSTALLATION] Attente de 200ms pour propagation...`);
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+
+  // ÉTAPE 3: Vérifier une dernière fois qu'aucune autre pièce n'occupe la position
   const verificationOccupants = await sbSelect('pieces', `*&position_id=eq.${currentPosition.id}`);
   const autresPieces = verificationOccupants.filter(p => p.id !== piece.id);
 
+  console.log(`[INSTALLATION] Vérification: ${verificationOccupants.length} pièce(s) trouvée(s), ${autresPieces.length} autre(s) pièce(s)`);
+
   if (autresPieces.length > 0) {
-    console.error(`[INSTALLATION] ERREUR: ${autresPieces.length} pièce(s) toujours à la position!`);
+    console.error(`[INSTALLATION] ⚠️ ERREUR: ${autresPieces.length} pièce(s) toujours à la position!`);
+    console.error('[INSTALLATION] Pièces restantes:', autresPieces.map(p => `${p.no_piece} (${p.id})`));
     // Forcer le nettoyage
     for (const autrePiece of autresPieces) {
+      console.log(`[INSTALLATION] FORCE CLEANUP: ${autrePiece.no_piece}`);
       await sbUpdate('pieces', autrePiece.id, {
         statut: 'Inventaire - À entretenir',
         position_id: null
@@ -596,18 +614,21 @@ async function installerPiece(piece, { force, typeEntretien, raison }) {
     }
   }
 
-  // ÉTAPE 3: Installer la nouvelle pièce
+  // ÉTAPE 4: Installer la nouvelle pièce
   console.log(`[INSTALLATION] Installation de ${piece.no_piece} à ${currentPosition.code_position}`);
 
   await sbUpdate('pieces', piece.id, {
     statut: 'Mise en production',
     position_id: currentPosition.id
   });
+
+  console.log(`[INSTALLATION] ✓ ${piece.no_piece} installée avec succès`);
+
   await enregistrerHistorique({
     piece,
     ancienStatut,
     nouveauStatut: 'Mise en production',
-    typeAction: force ? 'installation_forcee' : (ancienneInstallee ? 'remplacement' : 'installation'),
+    typeAction: force ? 'installation_forcee' : (pieceRemplacee ? 'remplacement' : 'installation'),
     position: currentPosition,
     notes: force ? `Forcé — ${typeEntretien} — ${raison}` : null
   });
