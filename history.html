@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>History — LAT Scanner Inventaire</title>
+<link rel="stylesheet" href="shared/style.css">
+<style>
+.filter-bar {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.filter-bar input, .filter-bar select {
+  flex: 1;
+  min-width: 200px;
+}
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.history-table th {
+  background: #f5f5f5;
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 2px solid #ddd;
+  font-weight: 600;
+}
+.history-table td {
+  padding: 0.75rem;
+  border-bottom: 1px solid #eee;
+}
+.history-table tbody tr:hover {
+  background: #f9f9f9;
+}
+.badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.badge.production { background: #e8f5e9; color: #2e7d32; }
+.badge.pret { background: #e3f2fd; color: #1565c0; }
+.badge.entretien { background: #fff3e0; color: #e65100; }
+.badge.huot { background: #f3e5f5; color: #6a1b9a; }
+.badge.rebutee { background: #ffebee; color: #c62828; }
+.date-cell {
+  white-space: nowrap;
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+.empty-position {
+  color: #999;
+  font-style: italic;
+}
+</style>
+</head>
+<body>
+<header class="lat-header">
+  <h1>LAT Scanner Inventaire</h1>
+  <nav class="lat-nav">
+    <a href="index.html">Accueil</a>
+    <a href="postes.html">Postes</a>
+    <a href="pieces.html">Pièces</a>
+    <a href="entrepot.html">Entrepôt Huot</a>
+    <a href="historique.html">Historique</a>
+    <a href="history.html" class="actif">History</a>
+    <a href="config.html">Configuration</a>
+  </nav>
+</header>
+<main>
+  <div class="carte">
+    <h2>History — Historique complet</h2>
+    <div class="filter-bar">
+      <input id="filter-piece" type="text" placeholder="Filtrer par No. pièce" inputmode="numeric">
+      <select id="filter-status">
+        <option value="">Tous les statuts</option>
+      </select>
+      <select id="filter-position">
+        <option value="">Toutes les positions</option>
+      </select>
+      <button class="secondaire" onclick="rafraichir()">Rafraîchir</button>
+    </div>
+  </div>
+
+  <div class="carte">
+    <div style="overflow-x: auto;">
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th>No. Pièce</th>
+            <th>Position</th>
+            <th>Statut</th>
+            <th>Start Date</th>
+            <th>End Date</th>
+            <th>Type d'action</th>
+          </tr>
+        </thead>
+        <tbody id="history-tbody">
+          <tr><td colspan="6" style="text-align:center;padding:2rem;color:#888;">Chargement...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script src="shared/api.js"></script>
+<script>
+let allHistory = [];
+let positions = {};
+
+function classeBadge(statut) {
+  if (statut === 'Inventaire - Prêt') return 'pret';
+  if (statut === 'Mise en production') return 'production';
+  if (statut === 'Inventaire - À entretenir') return 'entretien';
+  if (statut === 'Chez Huot') return 'huot';
+  if (statut === 'Remisée - Rebutée') return 'rebutee';
+  return '';
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  return date.toLocaleString('fr-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+}
+
+async function init() {
+  try {
+    // Load positions
+    const positionsArray = await sbSelect('positions', '*');
+    positionsArray.forEach(p => positions[p.id] = p);
+
+    // Populate filters
+    document.getElementById('filter-status').innerHTML += STATUTS.map(s =>
+      `<option value="${s}">${s}</option>`
+    ).join('');
+
+    document.getElementById('filter-position').innerHTML += positionsArray.map(p =>
+      `<option value="${p.code_position}">${p.code_position}</option>`
+    ).join('');
+
+    // Add event listeners
+    document.getElementById('filter-piece').addEventListener('input', afficher);
+    document.getElementById('filter-status').addEventListener('change', afficher);
+    document.getElementById('filter-position').addEventListener('change', afficher);
+
+    await rafraichir();
+  } catch (e) {
+    console.error('Erreur init:', e);
+    document.getElementById('history-tbody').innerHTML =
+      '<tr><td colspan="6" style="text-align:center;padding:2rem;color:#c33;">Erreur de chargement</td></tr>';
+  }
+}
+
+async function rafraichir() {
+  try {
+    allHistory = await sbSelect('historique', '*&order=debut_statut.desc&limit=200');
+    afficher();
+  } catch (e) {
+    console.error('Erreur chargement historique:', e);
+    document.getElementById('history-tbody').innerHTML =
+      '<tr><td colspan="6" style="text-align:center;padding:2rem;color:#c33;">Erreur de chargement</td></tr>';
+  }
+}
+
+function afficher() {
+  const filterPiece = document.getElementById('filter-piece').value.trim().toLowerCase();
+  const filterStatus = document.getElementById('filter-status').value;
+  const filterPosition = document.getElementById('filter-position').value;
+
+  const filtered = allHistory.filter(h => {
+    if (filterPiece && !h.no_piece.toLowerCase().includes(filterPiece)) return false;
+    if (filterStatus && h.nouveau_statut !== filterStatus) return false;
+    if (filterPosition && h.code_position !== filterPosition) return false;
+    return true;
+  });
+
+  const tbody = document.getElementById('history-tbody');
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:#888;">Aucun résultat</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(h => {
+    // Only show position if status is "Mise en production"
+    const showPosition = h.nouveau_statut === 'Mise en production';
+    const positionText = showPosition && h.code_position
+      ? h.code_position
+      : '<span class="empty-position">—</span>';
+
+    return `
+      <tr>
+        <td><strong>${h.no_piece || '—'}</strong></td>
+        <td>${positionText}</td>
+        <td><span class="badge ${classeBadge(h.nouveau_statut)}">${h.nouveau_statut || '—'}</span></td>
+        <td class="date-cell">${formatDate(h.debut_statut)}</td>
+        <td class="date-cell">${h.fin_statut ? formatDate(h.fin_statut) : '<span class="empty-position">En cours</span>'}</td>
+        <td style="font-size:0.85rem;color:#666;">${h.type_action || '—'}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+init();
+</script>
+</body>
+</html>
