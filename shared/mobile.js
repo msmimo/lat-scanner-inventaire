@@ -58,7 +58,6 @@ async function init() {
     // Load initial data
     await chargerPositionsMobile();
     await updatePositionSlots(); // Update visual position status
-    await chargerHistoriqueRecent();
     await chargerPiecesParStatut();
     await chargerStatsDashboard();
     await chargerDashboardTable(); // Load DC74 dashboard data
@@ -68,9 +67,11 @@ async function init() {
   } catch (e) {
     console.error('Erreur d\'initialisation:', e);
 
-    // Show error in UI
-    document.getElementById('recent-history').innerHTML =
-      '<div class="message error">⚠️ Configuration Supabase requise<br><small>Modifiez shared/api.js</small></div>';
+    // Show error in UI - only if element exists
+    const historyEl = document.getElementById('recent-history');
+    if (historyEl) {
+      historyEl.innerHTML = '<div class="message error">⚠️ Configuration Supabase requise<br><small>Modifiez shared/api.js</small></div>';
+    }
 
     if (e.message.includes('VOTRE-PROJET') || e.message.includes('Failed to fetch')) {
       console.error('💡 Configuration Supabase manquante. Éditez shared/api.js avec vos identifiants.');
@@ -802,6 +803,7 @@ async function chargerPiecesParStatut() {
       'Inventaire - Prêt': [],
       'Mise en production': [],
       'Inventaire - À entretenir': [],
+      'Chez Huot': [],
       'Remisée - Rebutée': []
     };
 
@@ -815,6 +817,7 @@ async function chargerPiecesParStatut() {
     afficherSection('pret', byStatus['Inventaire - Prêt']);
     afficherSection('production', byStatus['Mise en production']);
     afficherSection('entretien', byStatus['Inventaire - À entretenir']);
+    afficherSection('huot', byStatus['Chez Huot']);
     afficherSection('rebutee', byStatus['Remisée - Rebutée']);
 
   } catch (e) {
@@ -823,7 +826,13 @@ async function chargerPiecesParStatut() {
 }
 
 function afficherSection(sectionKey, pieces) {
-  document.getElementById(`count-${sectionKey}`).textContent = pieces.length;
+  // Handle special case for huot pieces count
+  const countId = sectionKey === 'huot' ? 'count-huot-pieces' : `count-${sectionKey}`;
+  const countEl = document.getElementById(countId);
+  if (countEl) {
+    countEl.textContent = pieces.length;
+  }
+
   const listEl = document.getElementById(`list-${sectionKey}`);
 
   if (!pieces.length) {
@@ -1648,6 +1657,38 @@ function saveOperatorName() {
   } else {
     showToast('⚠ Veuillez entrer un nom', 'warning');
   }
+}
+
+function showStatutDetails(statut) {
+  // Switch to Pieces tab and filter by status
+  switchTab('pieces');
+
+  // Wait for tab to load, then filter
+  setTimeout(() => {
+    // Clear the search filter
+    const filterInput = document.getElementById('pieces-filter');
+    if (filterInput) {
+      filterInput.value = '';
+    }
+
+    // Reload pieces and scroll to the relevant section
+    chargerPiecesParStatut().then(() => {
+      // Scroll to the section
+      let sectionClass = '';
+      if (statut === 'Mise en production') sectionClass = 'production';
+      else if (statut === 'Inventaire - Prêt') sectionClass = 'pret';
+      else if (statut === 'Inventaire - À entretenir') sectionClass = 'entretien';
+      else if (statut === 'Chez Huot') sectionClass = 'huot';
+      else if (statut === 'Remisée - Rebutée') sectionClass = 'rebutee';
+
+      if (sectionClass) {
+        const section = document.querySelector(`.section-header.${sectionClass}`);
+        if (section) {
+          section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+    });
+  }, 100);
 }
 
 function clearCache() {

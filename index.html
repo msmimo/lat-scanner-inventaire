@@ -129,39 +129,32 @@
   <!-- Tab 2: Dashboard View -->
   <div id="tab-dashboard" class="tab-view">
     <div class="stats-grid">
-      <div class="stat-card production">
+      <div class="stat-card production" onclick="showStatutDetails('Mise en production')">
         <div class="stat-value" id="stat-production">0</div>
         <div class="stat-label">Mise en production</div>
       </div>
-      <div class="stat-card pret">
+      <div class="stat-card pret" onclick="showStatutDetails('Inventaire - Prêt')">
         <div class="stat-value" id="stat-pret">0</div>
         <div class="stat-label">Inventaire - Prêt</div>
       </div>
-      <div class="stat-card entretien">
+      <div class="stat-card entretien" onclick="showStatutDetails('Inventaire - À entretenir')">
         <div class="stat-value" id="stat-entretien">0</div>
         <div class="stat-label">À entretenir</div>
       </div>
-      <div class="stat-card huot">
+      <div class="stat-card huot" onclick="showStatutDetails('Chez Huot')">
         <div class="stat-value" id="stat-huot">0</div>
         <div class="stat-label">Chez Huot</div>
       </div>
-      <div class="stat-card rebutee">
+      <div class="stat-card rebutee" onclick="showStatutDetails('Remisée - Rebutée')">
         <div class="stat-value" id="stat-rebutee">0</div>
         <div class="stat-label">Remisée - Rebutée</div>
       </div>
     </div>
 
     <div class="card">
-      <h3>Vue par table</h3>
+      <h3 style="color: white;">Vue par table</h3>
       <select id="dashboard-table-select" class="mobile-select" onchange="chargerDashboardTable()"></select>
       <div id="dashboard-positions" class="positions-grid"></div>
-    </div>
-
-    <div class="card">
-      <h3>Historique récent</h3>
-      <div id="recent-history" class="history-list">
-        <p class="loading">Chargement...</p>
-      </div>
     </div>
   </div>
 
@@ -194,6 +187,14 @@
           <span class="count" id="count-entretien">0</span>
         </div>
         <div class="piece-list" id="list-entretien"></div>
+      </div>
+
+      <div class="status-section">
+        <div class="section-header huot">
+          <h3>Chez Huot</h3>
+          <span class="count" id="count-huot-pieces">0</span>
+        </div>
+        <div class="piece-list" id="list-huot"></div>
       </div>
 
       <div class="status-section">
@@ -298,21 +299,21 @@
     <span class="nav-icon" aria-hidden="true">📷</span>
     <span class="nav-label">Scan</span>
   </button>
-  <button class="nav-item" onclick="switchTab('dashboard')" data-tab="dashboard" aria-label="Tableau de bord">
-    <span class="nav-icon" aria-hidden="true">📊</span>
-    <span class="nav-label">Dashboard</span>
+  <button class="nav-item" onclick="switchTab('history')" data-tab="history" aria-label="Historique">
+    <span class="nav-icon" aria-hidden="true">📋</span>
+    <span class="nav-label">History</span>
   </button>
   <button class="nav-item" onclick="switchTab('pieces')" data-tab="pieces" aria-label="Liste des pièces">
     <span class="nav-icon" aria-hidden="true">📦</span>
     <span class="nav-label">Pièces</span>
   </button>
+  <button class="nav-item" onclick="switchTab('dashboard')" data-tab="dashboard" aria-label="Tableau de bord">
+    <span class="nav-icon" aria-hidden="true">📊</span>
+    <span class="nav-label">Dashboard</span>
+  </button>
   <button class="nav-item" onclick="switchTab('huot')" data-tab="huot" aria-label="Entrepôt Huot">
     <span class="nav-icon" aria-hidden="true">🏭</span>
     <span class="nav-label">Huot</span>
-  </button>
-  <button class="nav-item" onclick="switchTab('history')" data-tab="history" aria-label="Historique">
-    <span class="nav-icon" aria-hidden="true">📋</span>
-    <span class="nav-label">History</span>
   </button>
   <button class="nav-item" onclick="switchTab('config')" data-tab="config" aria-label="Configuration">
     <span class="nav-icon" aria-hidden="true">⚙️</span>
