@@ -1673,7 +1673,7 @@ function showStatutDetails(statut) {
 
     // Reload pieces and scroll to the relevant section
     chargerPiecesParStatut().then(() => {
-      // Scroll to the section
+      // Scroll to the section - include some offset to show the title
       let sectionClass = '';
       if (statut === 'Mise en production') sectionClass = 'production';
       else if (statut === 'Inventaire - Prêt') sectionClass = 'pret';
@@ -1684,7 +1684,16 @@ function showStatutDetails(statut) {
       if (sectionClass) {
         const section = document.querySelector(`.section-header.${sectionClass}`);
         if (section) {
-          section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          // Scroll with offset to ensure title is visible
+          section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+          // Highlight the section briefly
+          section.style.transition = 'background-color 0.3s';
+          const originalBg = section.style.backgroundColor;
+          section.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+          setTimeout(() => {
+            section.style.backgroundColor = originalBg;
+          }, 1000);
         }
       }
     });
