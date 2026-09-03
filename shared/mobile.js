@@ -1543,9 +1543,26 @@ async function updateAPEXPositions() {
 
 // History Tab
 let allHistoryData = [];
+let historyPositionToTable = {}; // Map position_id to table name
 
 async function chargerHistoryTab() {
   try {
+    // Load positions and tables to map position_id to table name
+    const positions = await sbSelect('positions', '*');
+    const tables = await sbSelect('tables_travail', '*');
+
+    // Create mapping: table_id -> table_name
+    const tableMap = {};
+    tables.forEach(t => tableMap[t.id] = t.nom);
+
+    // Create mapping: position_id -> table_name
+    historyPositionToTable = {};
+    positions.forEach(p => {
+      if (p.table_id && tableMap[p.table_id]) {
+        historyPositionToTable[p.id] = tableMap[p.table_id];
+      }
+    });
+
     // Load history data
     allHistoryData = await sbSelect('historique', '*&order=debut_statut.desc&limit=200');
 
@@ -1563,7 +1580,7 @@ async function chargerHistoryTab() {
   } catch (e) {
     console.error('Erreur chargement history:', e);
     document.getElementById('history-table-body').innerHTML =
-      '<tr><td colspan="5" style="padding:1rem;text-align:center;color:#c33;">Erreur de chargement</td></tr>';
+      '<tr><td colspan="6" style="padding:1rem;text-align:center;color:#c33;">Erreur de chargement</td></tr>';
   }
 }
 
@@ -1580,7 +1597,7 @@ function afficherHistory() {
   const tbody = document.getElementById('history-table-body');
 
   if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" style="padding:1rem;text-align:center;color:#888;">Aucun résultat</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="padding:1rem;text-align:center;color:#888;">Aucun résultat</td></tr>';
     return;
   }
 
@@ -1588,6 +1605,11 @@ function afficherHistory() {
     // Only show position if status is "Mise en production"
     const showPosition = h.nouveau_statut === 'Mise en production';
     const positionText = showPosition && h.code_position ? h.code_position : '—';
+
+    // Get table name from position_id
+    const tableName = h.position_id && historyPositionToTable[h.position_id]
+      ? historyPositionToTable[h.position_id]
+      : '—';
 
     const startDate = h.debut_statut ? new Date(h.debut_statut).toLocaleString('fr-CA', {
       year: 'numeric',
@@ -1620,6 +1642,7 @@ function afficherHistory() {
     return `
       <tr style="border-bottom:1px solid #eee;">
         <td style="padding:0.5rem;"><strong>${h.no_piece || '—'}</strong></td>
+        <td style="padding:0.5rem;"><strong>${tableName}</strong></td>
         <td style="padding:0.5rem;">${positionText}</td>
         <td style="padding:0.5rem;"><span class="badge ${badgeClass}" style="font-size:0.75rem;">${h.nouveau_statut || '—'}</span></td>
         <td style="padding:0.5rem;font-size:0.8rem;white-space:nowrap;">${startDate}</td>
