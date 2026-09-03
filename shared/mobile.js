@@ -579,7 +579,7 @@ async function installerPiece(piece, { force, typeEntretien, raison }) {
     // Créer l'historique pour la pièce remplacée
     await enregistrerHistorique({
       piece: ancienneInstallee,
-      ancienStatut: 'Mise en production',
+      ancienStatut: 'DC74',
       nouveauStatut: 'Inventaire - À entretenir',
       typeAction: 'remplacement',
       position: currentPosition,
@@ -619,7 +619,7 @@ async function installerPiece(piece, { force, typeEntretien, raison }) {
   console.log(`[INSTALLATION] Installation de ${piece.no_piece} à ${currentPosition.code_position}`);
 
   await sbUpdate('pieces', piece.id, {
-    statut: 'Mise en production',
+    statut: 'DC74',
     position_id: currentPosition.id
   });
 
@@ -628,7 +628,7 @@ async function installerPiece(piece, { force, typeEntretien, raison }) {
   await enregistrerHistorique({
     piece,
     ancienStatut,
-    nouveauStatut: 'Mise en production',
+    nouveauStatut: 'DC74',
     typeAction: force ? 'installation_forcee' : (pieceRemplacee ? 'remplacement' : 'installation'),
     position: currentPosition,
     notes: force ? `Forcé — ${typeEntretien} — ${raison}` : null
@@ -650,7 +650,7 @@ async function installerPiece(piece, { force, typeEntretien, raison }) {
     entiteId: piece.id,
     action: force ? 'installation_forcee' : 'installation',
     avant: { statut: ancienStatut },
-    apres: { statut: 'Mise en production', position_id: currentPosition.id }
+    apres: { statut: 'DC74', position_id: currentPosition.id }
   });
 
   // Use toast for success feedback
@@ -742,8 +742,9 @@ async function chargerStatsDashboard() {
     STATUTS.forEach(s => counts[s] = 0);
     pieces.forEach(p => counts[p.statut] = (counts[p.statut] || 0) + 1);
 
-    document.getElementById('stat-production').textContent = counts['Mise en production'] || 0;
     document.getElementById('stat-pret').textContent = counts['Inventaire - Prêt'] || 0;
+    document.getElementById('stat-dc74').textContent = counts['DC74'] || 0;
+    document.getElementById('stat-dc75').textContent = counts['DC75'] || 0;
     document.getElementById('stat-entretien').textContent = counts['Inventaire - À entretenir'] || 0;
     document.getElementById('stat-huot').textContent = counts['Chez Huot'] || 0;
     document.getElementById('stat-rebutee').textContent = counts['Remisée - Rebutée'] || 0;
@@ -801,7 +802,8 @@ async function chargerPiecesParStatut() {
 
     const byStatus = {
       'Inventaire - Prêt': [],
-      'Mise en production': [],
+      'DC74': [],
+      'DC75': [],
       'Inventaire - À entretenir': [],
       'Chez Huot': [],
       'Remisée - Rebutée': []
@@ -815,7 +817,8 @@ async function chargerPiecesParStatut() {
 
     // Update counts and lists
     afficherSection('pret', byStatus['Inventaire - Prêt']);
-    afficherSection('production', byStatus['Mise en production']);
+    afficherSection('dc74', byStatus['DC74']);
+    afficherSection('dc75', byStatus['DC75']);
     afficherSection('entretien', byStatus['Inventaire - À entretenir']);
     afficherSection('huot', byStatus['Chez Huot']);
     afficherSection('rebutee', byStatus['Remisée - Rebutée']);
@@ -867,21 +870,70 @@ async function changerStatutPiece(pieceId) {
   const piece = allPieces.find(p => p.id === pieceId);
   if (!piece) return;
 
-  const choix = STATUTS.map((s, i) => `${i + 1}. ${s}`).join('\n');
-  const reponse = prompt(`Nouveau statut pour ${piece.no_piece} :\n${choix}`, '');
+  // Filter out current status from options
+  const availableStatuts = STATUTS.filter(s => s !== piece.statut);
+  const choix = availableStatuts.map((s, i) => `${i + 1}. ${s}`).join('\n');
+
+  const reponse = prompt(
+    `Pièce: ${piece.no_piece}\nStatut actuel: ${piece.statut}\n\nNouveau statut:\n${choix}`,
+    ''
+  );
+
   const index = parseInt(reponse, 10) - 1;
+  if (isNaN(index) || !availableStatuts[index]) return;
 
-  if (isNaN(index) || !STATUTS[index]) return;
-  const nouveauStatut = STATUTS[index];
-  if (nouveauStatut === piece.statut) return;
-
-  const raison = prompt('Raison du changement (optionnel) :') || null;
+  const nouveauStatut = availableStatuts[index];
   const ancienStatut = piece.statut;
 
+  // Check if need entretien selection
+  const statutsRequierantEntretien = ['Inventaire - Prêt', 'DC74', 'DC75'];
+  const needsEntretien =
+    statutsRequierantEntretien.includes(nouveauStatut) &&
+    !statutsRequierantEntretien.includes(ancienStatut);
+
+  let typeEntretien = null;
+  let raison = null;
+
+  if (needsEntretien) {
+    const entretienChoix = TYPES_ENTRETIEN.map((t, i) => `${i + 1}. ${t}`).join('\n');
+    const entretienReponse = prompt(
+      `Pièce ${piece.no_piece}: ${ancienStatut} → ${nouveauStatut}\n\nType d'entretien effectué:\n${entretienChoix}`,
+      ''
+    );
+
+    const entretienIndex = parseInt(entretienReponse, 10) - 1;
+    if (isNaN(entretienIndex) || !TYPES_ENTRETIEN[entretienIndex]) {
+      alert('Type d\'entretien requis pour ce changement de statut');
+      return;
+    }
+
+    typeEntretien = TYPES_ENTRETIEN[entretienIndex];
+
+    if (typeEntretien.startsWith('Autre')) {
+      raison = prompt('Précisez le type d\'entretien :') || '';
+    }
+  } else {
+    raison = prompt('Raison du changement (optionnel) :') || null;
+  }
+
+  // Update piece
   await sbUpdate('pieces', piece.id, {
     statut: nouveauStatut,
-    position_id: nouveauStatut === 'Mise en production' ? piece.position_id : null
+    // Only DC74/DC75 can have position
+    position_id: (nouveauStatut === 'DC74' || nouveauStatut === 'DC75') ? piece.position_id : null
   });
+
+  // Record entretien if needed
+  if (needsEntretien && typeEntretien) {
+    await sbInsert('entretiens', {
+      piece_id: piece.id,
+      position_id: piece.position_id || null,
+      type_entretien: typeEntretien,
+      precision_autre: typeEntretien.startsWith('Autre') ? raison : null,
+      raison: raison || null,
+      effectue_par: nomOperateur()
+    });
+  }
 
   await enregistrerHistorique({
     piece,
@@ -889,7 +941,7 @@ async function changerStatutPiece(pieceId) {
     nouveauStatut,
     typeAction: 'modification_statut',
     position: piece.position_id ? positionsById[piece.position_id] : null,
-    notes: raison
+    notes: needsEntretien ? `Entretien: ${typeEntretien}${raison ? ' - ' + raison : ''}` : raison
   });
 
   await enregistrerAudit({
@@ -898,9 +950,10 @@ async function changerStatutPiece(pieceId) {
     action: 'modification_statut',
     avant: { statut: ancienStatut },
     apres: { statut: nouveauStatut },
-    raison
+    raison: needsEntretien ? `Entretien: ${typeEntretien}` : raison
   });
 
+  showToast(`✓ ${piece.no_piece}: ${ancienStatut} → ${nouveauStatut}`, 'success');
   await chargerPiecesParStatut();
 }
 
@@ -1242,10 +1295,10 @@ async function saveAPEXValue(value) {
         statusEl.className = 'apex-status err';
         return;
       }
-      // Créer directement avec statut "Mise en production"
+      // Créer directement avec statut "DC74"
       piece = await sbInsert('pieces', {
         no_piece: value,
-        statut: 'Mise en production',
+        statut: 'DC74',
         position_id: position.id
       });
       await enregistrerAudit({
@@ -1257,7 +1310,7 @@ async function saveAPEXValue(value) {
       await enregistrerHistorique({
         piece,
         ancienStatut: null,
-        nouveauStatut: 'Mise en production',
+        nouveauStatut: 'DC74',
         typeAction: 'installation_nouvelle',
         position: position,
         notes: 'Nouvelle pièce créée et installée'
@@ -1278,8 +1331,8 @@ async function saveAPEXValue(value) {
       showToast('🚫 Cette pièce est rebutée.\n\nInformer le superviseur ou le groupe technique.', 'error');
       return;
     }
-    // === CAS 4: Pièce "Mise en production" (déjà installée ailleurs) ===
-    else if (piece.statut === 'Mise en production') {
+    // === CAS 4: Pièce "DC74" (déjà installée ailleurs) ===
+    else if (piece.statut === 'DC74') {
       if (!confirm(`⚠️ ATTENTION\n\nLa pièce ${piece.no_piece} est déjà en production ailleurs.\n\nConfirmez-vous le déplacement vers cette position ?`)) {
         statusEl.textContent = '❌ Opération annulée';
         statusEl.className = 'apex-status err';
@@ -1375,7 +1428,7 @@ async function saveAPEXValue(value) {
       });
       await enregistrerHistorique({
         piece: ancienneInstallee,
-        ancienStatut: 'Mise en production',
+        ancienStatut: 'DC74',
         nouveauStatut: 'Inventaire - À entretenir',
         typeAction: 'remplacement',
         position: position,
@@ -1385,14 +1438,14 @@ async function saveAPEXValue(value) {
 
     // Install new piece
     await sbUpdate('pieces', piece.id, {
-      statut: 'Mise en production',
+      statut: 'DC74',
       position_id: position.id
     });
 
     await enregistrerHistorique({
       piece,
       ancienStatut,
-      nouveauStatut: 'Mise en production',
+      nouveauStatut: 'DC74',
       typeAction: ancienneInstallee ? 'remplacement' : 'installation',
       position: position,
       notes: null
@@ -1403,7 +1456,7 @@ async function saveAPEXValue(value) {
       entiteId: piece.id,
       action: 'installation',
       avant: { statut: ancienStatut },
-      apres: { statut: 'Mise en production', position_id: position.id }
+      apres: { statut: 'DC74', position_id: position.id }
     });
 
     // Si une maintenance a été effectuée, l'enregistrer
@@ -1493,8 +1546,8 @@ async function updateAPEXPositions() {
   if (positionIds.length === 0) return;
 
   try {
-    // Requête avec filtre statut pour n'obtenir que les pièces "Mise en production"
-    const pieces = await sbSelect('pieces', `*&position_id=in.(${positionIds.join(',')})&statut=eq.Mise en production`);
+    // Requête avec filtre statut pour n'obtenir que les pièces "DC74"
+    const pieces = await sbSelect('pieces', `*&position_id=in.(${positionIds.join(',')})&statut=eq.DC74`);
 
     console.log(`[UPDATE APEX] Trouvé ${pieces.length} pièce(s) en production`);
 
@@ -1602,12 +1655,12 @@ function afficherHistory() {
   }
 
   tbody.innerHTML = filtered.map(h => {
-    // Only show position if status is "Mise en production"
-    const showPosition = h.nouveau_statut === 'Mise en production';
+    // Only show position if status is DC74 or DC75
+    const showPosition = (h.nouveau_statut === 'DC74' || h.nouveau_statut === 'DC75');
     const positionText = showPosition && h.code_position ? h.code_position : '—';
 
-    // Get table name from position_id
-    const tableName = h.position_id && historyPositionToTable[h.position_id]
+    // Only show table name if status is DC74 or DC75
+    const tableName = (h.nouveau_statut === 'DC74' || h.nouveau_statut === 'DC75') && h.position_id && historyPositionToTable[h.position_id]
       ? historyPositionToTable[h.position_id]
       : '—';
 
@@ -1633,7 +1686,7 @@ function afficherHistory() {
 
     // Badge styling
     let badgeClass = '';
-    if (h.nouveau_statut === 'Mise en production') badgeClass = 'production';
+    if (h.nouveau_statut === 'DC74' || h.nouveau_statut === 'DC75') badgeClass = 'production';
     else if (h.nouveau_statut === 'Inventaire - Prêt') badgeClass = 'pret';
     else if (h.nouveau_statut === 'Inventaire - À entretenir') badgeClass = 'entretien';
     else if (h.nouveau_statut === 'Chez Huot') badgeClass = 'huot';
@@ -1661,7 +1714,7 @@ async function chargerConfigTab() {
   // Load statistics
   try {
     const pieces = await sbSelect('pieces', '*');
-    const productionCount = pieces.filter(p => p.statut === 'Mise en production').length;
+    const productionCount = pieces.filter(p => p.statut === 'DC74' || p.statut === 'DC75').length;
     const entretienCount = pieces.filter(p => p.statut === 'Inventaire - À entretenir').length;
 
     document.getElementById('config-stat-total').textContent = pieces.length;
@@ -1700,7 +1753,7 @@ function showStatutDetails(statut) {
       setTimeout(() => {
         // Scroll to the section - include some offset to show the title
         let sectionClass = '';
-        if (statut === 'Mise en production') sectionClass = 'production';
+        if (statut === 'DC74' || statut === 'DC75') sectionClass = 'production';
         else if (statut === 'Inventaire - Prêt') sectionClass = 'pret';
         else if (statut === 'Inventaire - À entretenir') sectionClass = 'entretien';
         else if (statut === 'Chez Huot') sectionClass = 'huot';
@@ -1749,8 +1802,8 @@ function clearCache() {
 
 async function fixDataInconsistencies() {
   if (!confirm('Cette opération va corriger les incohérences dans les données:\n\n' +
-    '1. Pièces "Mise en production" sans position → "Inventaire - À entretenir"\n' +
-    '2. Pièces avec position mais pas "Mise en production" → Retirer la position\n' +
+    '1. Pièces "DC74" ou "DC75" sans position → "Inventaire - À entretenir"\n' +
+    '2. Pièces avec position mais pas "DC74" ou "DC75" → Retirer la position\n' +
     '3. Positions avec plusieurs pièces → Garder la plus récente seulement\n\n' +
     'Continuer ?')) {
     return;
@@ -1814,28 +1867,28 @@ async function fixDataInconsistencies() {
       }
     }
 
-    // Problem 1: "Mise en production" but no position_id
+    // Problem 1: "DC74" or "DC75" but no position_id
     for (const piece of allPieces) {
-      if (piece.statut === 'Mise en production' && !piece.position_id) {
+      if ((piece.statut === 'DC74' || piece.statut === 'DC75') && !piece.position_id) {
         await sbUpdate('pieces', piece.id, { statut: 'Inventaire - À entretenir' });
 
         await enregistrerHistorique({
           piece,
-          ancienStatut: 'Mise en production',
+          ancienStatut: piece.statut,
           nouveauStatut: 'Inventaire - À entretenir',
           typeAction: 'modification_statut',
           position: null,
-          notes: 'Correction: Mise en production sans position'
+          notes: `Correction: ${piece.statut} sans position`
         });
 
         fixedCount++;
-        console.log(`Fixed ${piece.no_piece}: Mise en production without position`);
+        console.log(`Fixed ${piece.no_piece}: ${piece.statut} without position`);
       }
     }
 
-    // Problem 2: Has position_id but not "Mise en production"
+    // Problem 2: Has position_id but not "DC74" or "DC75"
     for (const piece of allPieces) {
-      if (piece.position_id && piece.statut !== 'Mise en production') {
+      if (piece.position_id && piece.statut !== 'DC74' && piece.statut !== 'DC75') {
         await sbUpdate('pieces', piece.id, { position_id: null });
 
         await enregistrerHistorique({

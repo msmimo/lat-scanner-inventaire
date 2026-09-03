@@ -5,8 +5,9 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 
 const STATUTS = [
   'Inventaire - Prêt',
+  'DC74',
+  'DC75',
   'Chez Huot',
-  'Mise en production',
   'Remisée - Rebutée',
   'Inventaire - À entretenir'
 ];

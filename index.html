@@ -129,13 +129,17 @@
   <!-- Tab 2: Dashboard View -->
   <div id="tab-dashboard" class="tab-view">
     <div class="stats-grid">
-      <div class="stat-card production" onclick="showStatutDetails('Mise en production')">
-        <div class="stat-value" id="stat-production">0</div>
-        <div class="stat-label">Mise en production</div>
-      </div>
       <div class="stat-card pret" onclick="showStatutDetails('Inventaire - Prêt')">
         <div class="stat-value" id="stat-pret">0</div>
         <div class="stat-label">Inventaire - Prêt</div>
+      </div>
+      <div class="stat-card production" onclick="showStatutDetails('DC74')">
+        <div class="stat-value" id="stat-dc74">0</div>
+        <div class="stat-label">DC74</div>
+      </div>
+      <div class="stat-card production" onclick="showStatutDetails('DC75')">
+        <div class="stat-value" id="stat-dc75">0</div>
+        <div class="stat-label">DC75</div>
       </div>
       <div class="stat-card entretien" onclick="showStatutDetails('Inventaire - À entretenir')">
         <div class="stat-value" id="stat-entretien">0</div>
@@ -175,10 +179,18 @@
 
       <div class="status-section">
         <div class="section-header production">
-          <h3>Mise en production</h3>
-          <span class="count" id="count-production">0</span>
+          <h3>DC74</h3>
+          <span class="count" id="count-dc74">0</span>
         </div>
-        <div class="piece-list" id="list-production"></div>
+        <div class="piece-list" id="list-dc74"></div>
+      </div>
+
+      <div class="status-section">
+        <div class="section-header production">
+          <h3>DC75</h3>
+          <span class="count" id="count-dc75">0</span>
+        </div>
+        <div class="piece-list" id="list-dc75"></div>
       </div>
 
       <div class="status-section">
