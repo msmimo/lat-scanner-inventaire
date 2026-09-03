@@ -1,5 +1,5 @@
 -- LAT Scanner Inventaire - Fix Duplicate Positions
--- Ce script corrige les positions qui ont plusieurs pièces en "Mise en production"
+-- Ce script corrige les positions qui ont plusieurs pièces en "DC74" ou "DC75"
 -- Seule la pièce la plus récente (updated_at) sera conservée à chaque position
 
 -- Étape 1: Identifier et corriger les doublons
@@ -19,7 +19,7 @@ WITH ranked_pieces AS (
   FROM pieces p
   LEFT JOIN positions pos ON p.position_id = pos.id
   WHERE p.position_id IS NOT NULL
-    AND p.statut = 'Mise en production'
+    AND (p.statut = 'DC74' OR p.statut = 'DC75')
 ),
 pieces_a_retirer AS (
   SELECT
@@ -49,29 +49,30 @@ SELECT
 FROM pieces_a_retirer par
 JOIN pieces p ON p.id = par.id;
 
--- Étape 2: Corriger les pièces "Mise en production" sans position
+-- Étape 2: Corriger les pièces "DC74" ou "DC75" sans position
 UPDATE pieces
 SET
   statut = 'Inventaire - À entretenir',
   updated_at = NOW()
-WHERE statut = 'Mise en production'
+WHERE (statut = 'DC74' OR statut = 'DC75')
   AND position_id IS NULL;
 
--- Étape 3: Corriger les pièces avec position mais pas "Mise en production"
+-- Étape 3: Corriger les pièces avec position mais pas "DC74" ou "DC75"
 UPDATE pieces
 SET
   position_id = NULL,
   updated_at = NOW()
 WHERE position_id IS NOT NULL
-  AND statut != 'Mise en production';
+  AND statut NOT IN ('DC74', 'DC75');
 
 -- Vérification finale: afficher toutes les positions avec leurs pièces
 SELECT
   pos.code_position,
   COUNT(*) as nb_pieces,
-  STRING_AGG(p.no_piece, ', ') as pieces
+  STRING_AGG(p.no_piece, ', ') as pieces,
+  STRING_AGG(DISTINCT p.statut, ', ') as statuts
 FROM positions pos
-LEFT JOIN pieces p ON p.position_id = pos.id AND p.statut = 'Mise en production'
+LEFT JOIN pieces p ON p.position_id = pos.id AND (p.statut = 'DC74' OR p.statut = 'DC75')
 WHERE p.id IS NOT NULL
 GROUP BY pos.code_position
 ORDER BY pos.code_position;
