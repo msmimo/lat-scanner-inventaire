@@ -476,6 +476,7 @@ button:focus-visible {
 .section-header.pret { background: #10b981; }
 .section-header.production { background: #3b82f6; }
 .section-header.entretien { background: #f59e0b; }
+.section-header.huot { background: #8b5cf6; }
 .section-header.rebutee { background: #ef4444; }
 
 /* Piece List */

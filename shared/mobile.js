@@ -1701,13 +1701,13 @@ function showStatutDetails(statut) {
               behavior: 'smooth'
             });
 
-            // Highlight the section briefly
-            sectionHeader.style.transition = 'background-color 0.5s';
+            // Highlight the section briefly (faster animation)
+            sectionHeader.style.transition = 'background-color 0.25s';
             const originalBg = sectionHeader.style.backgroundColor;
-            sectionHeader.style.backgroundColor = 'rgba(255, 255, 255, 0.15)';
+            sectionHeader.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
             setTimeout(() => {
               sectionHeader.style.backgroundColor = originalBg;
-            }, 1500);
+            }, 600);
           } else {
             console.log(`[SCROLL] Section header not found for ${sectionClass}`);
           }
