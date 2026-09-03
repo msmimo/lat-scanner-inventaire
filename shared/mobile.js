@@ -1673,29 +1673,46 @@ function showStatutDetails(statut) {
 
     // Reload pieces and scroll to the relevant section
     chargerPiecesParStatut().then(() => {
-      // Scroll to the section - include some offset to show the title
-      let sectionClass = '';
-      if (statut === 'Mise en production') sectionClass = 'production';
-      else if (statut === 'Inventaire - Prêt') sectionClass = 'pret';
-      else if (statut === 'Inventaire - À entretenir') sectionClass = 'entretien';
-      else if (statut === 'Chez Huot') sectionClass = 'huot';
-      else if (statut === 'Remisée - Rebutée') sectionClass = 'rebutee';
+      // Wait a bit more for rendering
+      setTimeout(() => {
+        // Scroll to the section - include some offset to show the title
+        let sectionClass = '';
+        if (statut === 'Mise en production') sectionClass = 'production';
+        else if (statut === 'Inventaire - Prêt') sectionClass = 'pret';
+        else if (statut === 'Inventaire - À entretenir') sectionClass = 'entretien';
+        else if (statut === 'Chez Huot') sectionClass = 'huot';
+        else if (statut === 'Remisée - Rebutée') sectionClass = 'rebutee';
 
-      if (sectionClass) {
-        const section = document.querySelector(`.section-header.${sectionClass}`);
-        if (section) {
-          // Scroll with offset to ensure title is visible
-          section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (sectionClass) {
+          const sectionHeader = document.querySelector(`.section-header.${sectionClass}`);
+          if (sectionHeader) {
+            console.log(`[SCROLL] Scrolling to ${statut} section`);
 
-          // Highlight the section briefly
-          section.style.transition = 'background-color 0.3s';
-          const originalBg = section.style.backgroundColor;
-          section.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-          setTimeout(() => {
-            section.style.backgroundColor = originalBg;
-          }, 1000);
+            // Get the position of the element
+            const rect = sectionHeader.getBoundingClientRect();
+            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+
+            // Calculate position with offset to show title at top with some space
+            const targetPosition = rect.top + scrollTop - 80; // 80px offset from top
+
+            // Scroll to position
+            window.scrollTo({
+              top: targetPosition,
+              behavior: 'smooth'
+            });
+
+            // Highlight the section briefly
+            sectionHeader.style.transition = 'background-color 0.5s';
+            const originalBg = sectionHeader.style.backgroundColor;
+            sectionHeader.style.backgroundColor = 'rgba(255, 255, 255, 0.15)';
+            setTimeout(() => {
+              sectionHeader.style.backgroundColor = originalBg;
+            }, 1500);
+          } else {
+            console.log(`[SCROLL] Section header not found for ${sectionClass}`);
+          }
         }
-      }
+      }, 200);
     });
   }, 100);
 }
